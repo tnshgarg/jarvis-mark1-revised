@@ -317,20 +317,33 @@ class PythonASTAnalyzer(BaseASTAnalyzer):
             
             def _is_agent_class(self, node):
                 """Check if class appears to be an agent"""
-                # Check class name
-                if any(indicator in node.name for indicator in self.analyzer.agent_indicators):
+                # Check class name for agent indicators
+                if any(indicator.lower() in node.name.lower() for indicator in self.analyzer.agent_indicators):
                     return True
                 
                 # Check base classes
                 for base in node.bases:
                     base_name = self._get_base_name(base)
-                    if any(indicator in base_name for indicator in self.analyzer.agent_indicators):
+                    if any(indicator.lower() in base_name.lower() for indicator in self.analyzer.agent_indicators):
                         return True
                 
-                # Check methods
+                # Check for CrewAI specific patterns
+                if 'agent' in node.name.lower():
+                    # Look for methods that return Agent() calls
+                    for item in node.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            # Check if method contains Agent() calls
+                            for subnode in ast.walk(item):
+                                if isinstance(subnode, ast.Call):
+                                    if isinstance(subnode.func, ast.Name) and subnode.func.id == 'Agent':
+                                        return True
+                                    elif isinstance(subnode.func, ast.Attribute) and subnode.func.attr == 'Agent':
+                                        return True
+                
+                # Check for traditional agent methods
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        if item.name in ['execute', 'run', 'process', 'handle']:
+                        if item.name in ['execute', 'run', 'process', 'handle', 'invoke']:
                             return True
                 
                 return False
@@ -397,22 +410,27 @@ class PythonASTAnalyzer(BaseASTAnalyzer):
         """Extract capabilities from code analysis"""
         capabilities = set()
         
+        # Create a flat list of all capability keywords
+        all_capability_keywords = []
+        for category, keywords in CAPABILITY_KEYWORDS.items():
+            all_capability_keywords.extend(keywords)
+        
         # Extract from method names and docstrings
         for element in elements:
             if element.node_type in [NodeType.FUNCTION, NodeType.METHOD, NodeType.ASYNC_FUNCTION]:
                 # Check method name
-                for keyword in CAPABILITY_KEYWORDS:
+                for keyword in all_capability_keywords:
                     if keyword.lower() in element.name.lower():
                         capabilities.add(keyword)
                 
                 # Check docstring
                 if element.docstring:
-                    for keyword in CAPABILITY_KEYWORDS:
+                    for keyword in all_capability_keywords:
                         if keyword.lower() in element.docstring.lower():
                             capabilities.add(keyword)
         
         # Extract from content analysis
-        for keyword in CAPABILITY_KEYWORDS:
+        for keyword in all_capability_keywords:
             if keyword.lower() in content.lower():
                 capabilities.add(keyword)
         
@@ -504,7 +522,14 @@ class PythonASTAnalyzer(BaseASTAnalyzer):
     
     def _identify_framework(self, element: CodeElement) -> Optional[str]:
         """Identify which framework a class belongs to"""
-        # Check base classes
+        # Check for CrewAI patterns first (most specific)
+        if any('crewai' in base.lower() for base in element.base_classes):
+            return 'crewai'
+        
+        if any('crewai' in decorator.lower() for decorator in element.decorators):
+            return 'crewai'
+        
+        # Check base classes for other frameworks
         for base in element.base_classes:
             for framework, patterns in self.framework_patterns.items():
                 if any(pattern in base for pattern in patterns):
@@ -516,20 +541,32 @@ class PythonASTAnalyzer(BaseASTAnalyzer):
                 if any(pattern in decorator for pattern in patterns):
                     return framework
         
+        # For classes that might be agent containers (like CustomAgents), 
+        # check if they have methods that return Agent instances
+        if element.node_type == NodeType.CLASS:
+            # If class name contains "Agent" and has methods, it might be CrewAI
+            if 'agent' in element.name.lower():
+                return 'crewai'  # Assume CrewAI for agent classes
+        
         return None
     
     def _extract_class_capabilities(self, element: CodeElement) -> List[str]:
         """Extract capabilities from a class element"""
         capabilities = []
         
+        # Create a flat list of all capability keywords
+        all_capability_keywords = []
+        for category, keywords in CAPABILITY_KEYWORDS.items():
+            all_capability_keywords.extend(keywords)
+        
         # Check class name
-        for keyword in CAPABILITY_KEYWORDS:
+        for keyword in all_capability_keywords:
             if keyword.lower() in element.name.lower():
                 capabilities.append(keyword)
         
         # Check docstring
         if element.docstring:
-            for keyword in CAPABILITY_KEYWORDS:
+            for keyword in all_capability_keywords:
                 if keyword.lower() in element.docstring.lower():
                     capabilities.append(keyword)
         
