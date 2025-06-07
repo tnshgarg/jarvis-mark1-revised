@@ -1,0 +1,63 @@
+# CrewAI & Multi-Agent Systems Dependencies
+# Phase 3 Session 16: CrewAI Integration
+
+# Core CrewAI Framework
+crewai>=0.36.0
+crewai-tools>=0.2.0
+
+# Multi-Agent Framework Support
+pydantic>=2.0.0
+langchain>=0.0.300
+langchain-community>=0.0.25
+langchain-openai>=0.0.8
+
+# Agent Communication and Coordination
+fastapi>=0.100.0
+websockets>=11.0.0
+redis>=4.5.0
+celery>=5.3.0
+
+# Collaborative Workflow Engine
+prefect>=2.14.0
+airflow>=2.7.0
+temporal-sdk>=1.5.0
+
+# Agent Memory and State Management
+chromadb>=0.4.0
+weaviate-client>=3.24.0
+pinecone-client>=2.2.0
+
+# Role-Based Task Management
+networkx>=3.1
+graphlib_backport>=1.0.3
+topological-sort>=1.10
+
+# Inter-Agent Communication
+grpc>=1.59.0
+grpcio-tools>=1.59.0
+protobuf>=4.24.0
+
+# Multi-Agent Testing and Simulation
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+
+# Performance and Monitoring
+structlog>=23.1.0
+prometheus-client>=0.17.0
+opentelemetry-api>=1.20.0
+
+# Data Processing for Crew Workflows
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Visualization for Crew Analytics
+matplotlib>=3.7.0
+plotly>=5.15.0
+networkx[default]>=3.1
+
+# Development Tools
+black>=23.7.0
+flake8>=6.0.0
+mypy>=1.5.0 

@@ -466,7 +466,7 @@ class AutoGPTAgentAdapter(BaseAgentAdapter):
         
         # Execute with agent
         if hasattr(self.agent, 'run'):
-            result = await self.agent_instance.run(input_data)
+            result = await self.agent.run(input_data)
         else:
             result = str(input_data)  # Mock execution
         
@@ -496,7 +496,7 @@ class AutoGPTAgentAdapter(BaseAgentAdapter):
     async def _standard_invoke(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Handle standard agent invocation"""
         if hasattr(self.agent, 'run'):
-            result = await self.agent_instance.run(input_data)
+            result = await self.agent.run(input_data)
         else:
             result = str(input_data)  # Mock execution
         
@@ -599,7 +599,7 @@ class AutoGPTAgentAdapter(BaseAgentAdapter):
         try:
             # Test basic agent responsiveness
             if hasattr(self.agent, 'run'):
-                test_result = await self.agent_instance.run({"test": "health_check"})
+                test_result = await self.agent.run({"test": "health_check"})
                 return test_result is not None
             else:
                 # Agent exists and has basic attributes

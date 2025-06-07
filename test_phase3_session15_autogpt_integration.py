@@ -540,7 +540,7 @@ async def test_autogpt_integration():
         
         autonomy_levels = [r["autonomy_level"] for r in integration_results]
         unique_levels = set(autonomy_levels)
-        print(f"   Autonomy Levels: {', '.join(unique_levels)}")
+        print(f"   Autonomy Levels: {', '.join(str(level) for level in unique_levels)}")
         
         return {
             "total_agents": len(integration_results),
