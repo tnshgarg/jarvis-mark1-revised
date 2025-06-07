@@ -28,6 +28,7 @@ class ErrorCategory(Enum):
     ORCHESTRATION = "orchestration"
     INTEGRATION = "integration"
     VALIDATION = "validation"
+    TASK = "task"
 
 
 class Mark1BaseException(Exception):
@@ -123,6 +124,10 @@ class MissingConfigurationException(ConfigurationException):
         super().__init__(message, context=context, severity=ErrorSeverity.CRITICAL)
 
 
+# Backward compatibility aliases
+ConfigurationError = ConfigurationException
+
+
 # Agent-related exceptions
 class AgentException(Mark1BaseException):
     """Base class for agent-related errors"""
@@ -130,44 +135,167 @@ class AgentException(Mark1BaseException):
     def __init__(self, message: str, agent_id: Optional[str] = None, **kwargs):
         self.agent_id = agent_id
         kwargs.setdefault('category', ErrorCategory.AGENT)
-        kwargs.setdefault('context', {}).update({"agent_id": agent_id})
+        
+        if agent_id:
+            message = f"Agent {agent_id}: {message}"
+            
+        context = kwargs.get('context', {})
+        context['agent_id'] = agent_id
+        kwargs['context'] = context
+        
         super().__init__(message, **kwargs)
 
 
 class AgentNotFoundException(AgentException):
-    """Raised when an agent cannot be found"""
+    """Raised when an agent is not found"""
     
     def __init__(self, agent_id: str):
-        message = f"Agent not found: {agent_id}"
-        super().__init__(message, agent_id=agent_id, severity=ErrorSeverity.MEDIUM)
+        super().__init__(
+            f"Agent not found: {agent_id}",
+            agent_id=agent_id,
+            severity=ErrorSeverity.MEDIUM
+        )
 
 
 class AgentRegistrationException(AgentException):
     """Raised when agent registration fails"""
     
-    def __init__(self, agent_id: str, reason: str):
-        message = f"Failed to register agent '{agent_id}': {reason}"
-        context = {"registration_failure_reason": reason}
-        super().__init__(message, agent_id=agent_id, context=context, severity=ErrorSeverity.HIGH)
+    def __init__(self, agent_name: str, reason: str, error: Optional[Exception] = None):
+        message = f"Agent registration failed for '{agent_name}': {reason}"
+        context = {"agent_name": agent_name, "reason": reason}
+        super().__init__(
+            message,
+            context=context,
+            cause=error,
+            severity=ErrorSeverity.HIGH
+        )
 
 
 class AgentExecutionException(AgentException):
     """Raised when agent execution fails"""
     
-    def __init__(self, agent_id: str, task_id: Optional[str] = None, error: Optional[Exception] = None):
-        self.task_id = task_id
-        
-        message = f"Agent execution failed: {agent_id}"
-        if task_id:
-            message += f" (task: {task_id})"
-            
-        context = {"task_id": task_id}
+    def __init__(self, agent_id: str, task: str, error: Exception):
+        message = f"Agent execution failed for task: {task}"
+        context = {"task": task}
         super().__init__(
-            message, 
-            agent_id=agent_id, 
-            context=context, 
-            cause=error, 
+            message,
+            agent_id=agent_id,
+            context=context,
+            cause=error,
             severity=ErrorSeverity.HIGH
+        )
+
+
+class AgentTimeoutException(AgentException):
+    """Raised when agent execution times out"""
+    
+    def __init__(self, agent_id: str, timeout_seconds: int):
+        message = f"Agent execution timed out after {timeout_seconds} seconds"
+        context = {"timeout_seconds": timeout_seconds}
+        super().__init__(
+            message,
+            agent_id=agent_id,
+            context=context,
+            severity=ErrorSeverity.HIGH
+        )
+
+
+class AgentLoadError(AgentException):
+    """Raised when agent loading fails"""
+    
+    def __init__(self, agent_path: str, reason: str, error: Optional[Exception] = None):
+        message = f"Failed to load agent from '{agent_path}': {reason}"
+        context = {"agent_path": agent_path, "reason": reason}
+        super().__init__(
+            message,
+            context=context,
+            cause=error,
+            severity=ErrorSeverity.HIGH
+        )
+
+
+class DiscoveryError(AgentException):
+    """Raised when agent discovery fails"""
+    
+    def __init__(self, path: str, reason: str, error: Optional[Exception] = None):
+        message = f"Agent discovery failed for path '{path}': {reason}"
+        context = {"discovery_path": path, "reason": reason}
+        super().__init__(
+            message,
+            context=context,
+            cause=error,
+            severity=ErrorSeverity.MEDIUM
+        )
+
+
+# Task-related exceptions
+class TaskException(Mark1BaseException):
+    """Base class for task-related errors"""
+    
+    def __init__(self, message: str, task_id: Optional[str] = None, **kwargs):
+        self.task_id = task_id
+        kwargs.setdefault('category', ErrorCategory.TASK)
+        
+        if task_id:
+            message = f"Task {task_id}: {message}"
+            
+        context = kwargs.get('context', {})
+        context['task_id'] = task_id
+        kwargs['context'] = context
+        
+        super().__init__(message, **kwargs)
+
+
+class TaskNotFoundException(TaskException):
+    """Raised when a task is not found"""
+    
+    def __init__(self, task_id: str):
+        super().__init__(
+            f"Task not found: {task_id}",
+            task_id=task_id,
+            severity=ErrorSeverity.MEDIUM
+        )
+
+
+class TaskExecutionException(TaskException):
+    """Raised when task execution fails"""
+    
+    def __init__(self, task_id: str, reason: str, error: Optional[Exception] = None):
+        message = f"Task execution failed: {reason}"
+        context = {"failure_reason": reason}
+        super().__init__(
+            message,
+            task_id=task_id,
+            context=context,
+            cause=error,
+            severity=ErrorSeverity.HIGH
+        )
+
+
+class TaskTimeoutException(TaskException):
+    """Raised when task execution times out"""
+    
+    def __init__(self, task_id: str, timeout_seconds: int):
+        message = f"Task execution timed out after {timeout_seconds} seconds"
+        context = {"timeout_seconds": timeout_seconds}
+        super().__init__(
+            message,
+            task_id=task_id,
+            context=context,
+            severity=ErrorSeverity.HIGH
+        )
+
+
+class TaskPlanningException(TaskException):
+    """Raised when task planning fails"""
+    
+    def __init__(self, message: str, task_description: Optional[str] = None, error: Optional[Exception] = None):
+        context = {"task_description": task_description}
+        super().__init__(
+            message,
+            context=context,
+            cause=error,
+            severity=ErrorSeverity.MEDIUM
         )
 
 
@@ -263,6 +391,26 @@ class StorageException(Mark1BaseException):
         super().__init__(message, **kwargs)
 
 
+class DatabaseError(StorageException):
+    """Raised when database operations fail"""
+    
+    def __init__(self, message: str, operation: Optional[str] = None, error: Optional[Exception] = None):
+        self.operation = operation
+        
+        if operation:
+            message = f"Database {operation} failed: {message}"
+        else:
+            message = f"Database operation failed: {message}"
+            
+        context = {"operation": operation}
+        super().__init__(
+            message, 
+            context=context, 
+            cause=error, 
+            severity=ErrorSeverity.HIGH
+        )
+
+
 class DatabaseConnectionException(StorageException):
     """Raised when database connection fails"""
     
@@ -286,6 +434,21 @@ class VectorStoreException(StorageException):
             message += f" (collection: {collection})"
             
         context = {"operation": operation, "collection": collection}
+        super().__init__(message, context=context, cause=error, severity=ErrorSeverity.HIGH)
+
+
+class ContextError(StorageException):
+    """Raised when context operations fail"""
+    
+    def __init__(self, message: str, context_id: Optional[str] = None, error: Optional[Exception] = None):
+        self.context_id = context_id
+        
+        if context_id:
+            message = f"Context error for {context_id}: {message}"
+        else:
+            message = f"Context operation failed: {message}"
+            
+        context = {"context_id": context_id}
         super().__init__(message, context=context, cause=error, severity=ErrorSeverity.HIGH)
 
 
@@ -478,3 +641,7 @@ def handle_exception(
 def create_error_context(**kwargs) -> Dict[str, Any]:
     """Create standardized error context dictionary"""
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+# Backwards compatibility aliases
+ValidationError = ValidationException  # For backwards compatibility

@@ -176,6 +176,23 @@ class CommunicationProtocol(Enum):
 
 
 # =============================================================================
+# CONTEXT AND MEMORY CONSTANTS
+# =============================================================================
+
+# Context size limits (in bytes)
+MAX_CONTEXT_SIZE = 10 * 1024 * 1024  # 10MB maximum context size
+DEFAULT_CONTEXT_WINDOW = 4096  # Default context window in tokens
+MAX_CONVERSATION_LENGTH = 1000  # Maximum conversation turns
+
+# Context retention settings
+CONTEXT_RETENTION_DAYS = 30  # Default context retention period in days
+
+# Token estimation constants
+AVERAGE_CHARS_PER_TOKEN = 4  # Rough estimation for token counting
+MAX_TOKENS_PER_CONTEXT = 32000  # Maximum tokens in a single context
+
+
+# =============================================================================
 # FILE EXTENSIONS AND LANGUAGE SUPPORT
 # =============================================================================
 
@@ -625,6 +642,86 @@ DEFAULT_CONFIG = {
         "metrics_interval": 60,
         "enable_tracing": False
     }
+}
+
+
+# =============================================================================
+# AGENT DISCOVERY AND SCANNING
+# =============================================================================
+
+# Default paths to search for agents
+AGENT_DISCOVERY_PATHS = [
+    "agents/",
+    "src/agents/",
+    "app/agents/",
+    "lib/agents/",
+    "modules/agents/",
+    "./",
+    "src/",
+    "app/",
+    "lib/",
+    "modules/"
+]
+
+# File patterns for agent detection
+AGENT_FILE_PATTERNS = {
+    "langchain": [
+        r".*agent.*\.py$",
+        r".*chain.*\.py$",
+        r".*tool.*\.py$",
+        r".*executor.*\.py$"
+    ],
+    "crewai": [
+        r".*crew.*\.py$",
+        r".*agent.*\.py$",
+        r".*task.*\.py$"
+    ],
+    "autogpt": [
+        r".*autogpt.*\.py$",
+        r".*agent.*\.py$",
+        r".*plugin.*\.py$"
+    ],
+    "custom": [
+        r".*agent.*\.py$",
+        r".*bot.*\.py$",
+        r".*assistant.*\.py$"
+    ]
+}
+
+# Agent detection keywords and patterns
+AGENT_KEYWORDS = [
+    "agent", "chain", "tool", "executor", "crew", "task",
+    "autogpt", "plugin", "bot", "assistant", "llm", "ai"
+]
+
+# Framework detection patterns
+FRAMEWORK_DETECTION_PATTERNS = {
+    "langchain": [
+        r"from langchain",
+        r"import langchain",
+        r"LangChain",
+        r"BaseAgent",
+        r"AgentExecutor",
+        r"Chain"
+    ],
+    "crewai": [
+        r"from crewai",
+        r"import crewai",
+        r"CrewAI",
+        r"Agent.*crew",
+        r"Task.*crew"
+    ],
+    "autogpt": [
+        r"from autogpt",
+        r"import autogpt",
+        r"AutoGPT",
+        r"auto_gpt"
+    ],
+    "openai_assistants": [
+        r"openai\.beta\.assistants",
+        r"Assistant.*openai",
+        r"client\.beta\.assistants"
+    ]
 }
 
 

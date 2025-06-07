@@ -11,12 +11,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    # Fallback for older pydantic versions
+    from pydantic import BaseSettings
+
 from pydantic import (
     BaseModel,
-    BaseSettings,
     Field,
-    validator,
-    root_validator,
+    field_validator,
+    model_validator,
     SecretStr
 )
 from pydantic.types import PositiveInt
@@ -52,7 +57,8 @@ class DatabaseConfig(BaseModel):
     pool_recycle: PositiveInt = Field(default=1800, description="Pool recycle time")
     echo: bool = Field(default=False, description="Enable SQL query logging")
     
-    @validator('url')
+    @field_validator('url')
+    @classmethod
     def validate_database_url(cls, v):
         """Validate database URL format"""
         try:
@@ -115,7 +121,8 @@ class OllamaConfig(BaseModel):
         default=2048, description="Maximum tokens to generate"
     )
     
-    @validator('base_url')
+    @field_validator('base_url')
+    @classmethod
     def validate_base_url(cls, v):
         """Validate Ollama base URL"""
         try:
@@ -284,30 +291,41 @@ class Settings(BaseSettings):
         env_nested_delimiter = "__"
         case_sensitive = False
         
-    @root_validator
+    @model_validator(mode='before')
+    @classmethod
     def set_default_paths(cls, values):
         """Set default paths based on base directory"""
-        base_dir = values.get("base_dir", Path.cwd())
+        # Handle both dict and model instance
+        if hasattr(values, 'get'):
+            data = values
+        else:
+            data = values.__dict__ if hasattr(values, '__dict__') else values
         
-        if not values.get("data_dir"):
-            values["data_dir"] = base_dir / "data"
+        base_dir = data.get("base_dir", Path.cwd())
+        if isinstance(base_dir, str):
+            base_dir = Path(base_dir)
+        
+        if not data.get("data_dir"):
+            data["data_dir"] = base_dir / "data"
             
-        if not values.get("log_dir"):
-            values["log_dir"] = base_dir / "data" / "logs"
+        if not data.get("log_dir"):
+            data["log_dir"] = base_dir / "data" / "logs"
             
-        if not values.get("agents_dir"):
-            values["agents_dir"] = base_dir / "agents"
+        if not data.get("agents_dir"):
+            data["agents_dir"] = base_dir / "agents"
             
-        return values
+        return data
     
-    @validator('environment', pre=True)
+    @field_validator('environment', mode='before')
+    @classmethod
     def validate_environment(cls, v):
         """Validate and normalize environment value"""
         if isinstance(v, str):
             return Environment(v.lower())
         return v
     
-    @validator('log_level', pre=True)
+    @field_validator('log_level', mode='before')
+    @classmethod
     def validate_log_level(cls, v):
         """Validate and normalize log level value"""
         if isinstance(v, str):
