@@ -51,6 +51,24 @@ class AgentMetadata:
             self.tags = []
 
 
+@dataclass
+class DiscoveredAgent:
+    """Represents an agent discovered during framework scanning"""
+    name: str
+    file_path: Path
+    framework: str
+    class_name: Optional[str] = None
+    confidence: float = 0.8
+    capabilities: List[str] = None
+    metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.capabilities is None:
+            self.capabilities = []
+        if self.metadata is None:
+            self.metadata = {}
+
+
 class AgentDiscoveryStrategy(ABC):
     """Abstract base class for agent discovery strategies."""
     

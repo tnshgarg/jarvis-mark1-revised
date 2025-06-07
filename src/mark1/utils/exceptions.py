@@ -682,3 +682,8 @@ class ScanException(Mark1BaseException):
     def __init__(self, message: str, scan_path: str = None):
         super().__init__(message)
         self.scan_path = scan_path
+
+
+class IntegrationError(Mark1BaseException):
+    """Exception raised when agent integration fails"""
+    pass
