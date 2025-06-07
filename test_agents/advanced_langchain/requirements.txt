@@ -1,0 +1,57 @@
+# Advanced LangChain & LangGraph Integration Requirements for Session 14
+
+# Core LangChain ecosystem
+langchain==0.2.16
+langchain-openai==0.1.21
+langchain-community==0.2.16
+langchain-core==0.2.37
+langchain-text-splitters==0.2.2
+
+# LangGraph for advanced workflows
+langgraph==0.1.19
+
+# LangSmith for monitoring (optional)
+langsmith==0.1.90
+
+# OpenAI API
+openai==1.37.1
+
+# Anthropic Claude API (optional)
+anthropic==0.34.1
+
+# Additional LLM providers
+ollama==0.2.1
+
+# Async support
+aiohttp==3.9.5
+asyncio-throttle==1.0.2
+
+# Data structures and parsing
+pydantic==2.8.2
+typing-extensions==4.12.2
+
+# Structured logging
+structlog==23.2.0
+
+# Testing and development
+pytest==8.3.2
+pytest-asyncio==0.23.8
+pytest-mock==3.14.0
+
+# File system utilities
+watchdog==4.0.1
+
+# JSON handling
+jsonschema==4.22.0
+
+# Time utilities
+python-dateutil==2.9.0
+
+# Memory management
+psutil==6.0.0
+
+# Concurrency utilities
+concurrent-futures==3.1.1
+
+# Graph and network utilities (for workflow analysis)
+networkx==3.3 
