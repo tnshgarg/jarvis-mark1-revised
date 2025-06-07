@@ -1,626 +1,439 @@
 """
-Codebase Scanner for Mark-1 Orchestrator
+Enhanced Codebase Scanner for Mark-1 Orchestrator
 
-Advanced codebase analysis system that discovers and analyzes AI agents
-across multiple programming languages and frameworks.
+Comprehensive codebase analysis including agent detection, LLM call detection,
+and multi-language AST analysis.
 """
 
 import asyncio
-import hashlib
-import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Set, Union
+from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass
-from enum import Enum
 import structlog
 
-from mark1.config.settings import get_settings
-from mark1.utils.exceptions import ScanningException, InvalidCodebaseException, ParseException
-from mark1.utils.constants import AGENT_DISCOVERY_PATHS, AGENT_FILE_PATTERNS, AGENT_KEYWORDS
+from mark1.utils.exceptions import ScanException
+from mark1.scanning.ast_analyzer import MultiLanguageASTAnalyzer, AnalysisResult
+from mark1.scanning.llm_call_detector import LLMCallDetector, DetectionResult
 
 
-class ScanStatus(Enum):
-    """Scanning status enumeration"""
-    PENDING = "pending"
-    SCANNING = "scanning"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-@dataclass
-class AgentDiscoveryInfo:
-    """Information about a discovered agent"""
+@dataclass 
+class AgentInfo:
+    """Information about a detected agent"""
     name: str
-    framework: str
     file_path: Path
+    framework: str
     capabilities: List[str]
     confidence: float
     metadata: Dict[str, Any]
-    created_at: datetime
+    module_path: Optional[str] = None
+    class_name: Optional[str] = None
 
 
 @dataclass
-class ScanResult:
-    """Result of a codebase scan"""
-    scan_id: str
+class ScanResults:
+    """Comprehensive scan results"""
     scan_path: Path
-    status: ScanStatus
-    discovered_agents: List[AgentDiscoveryInfo]
+    discovered_agents: List[AgentInfo]
     total_files_scanned: int
     scan_duration: float
     framework_distribution: Dict[str, int]
-    error_count: int
-    errors: List[str]
-    started_at: datetime
-    completed_at: Optional[datetime] = None
-
-
-@dataclass
-class FileAnalysisResult:
-    """Result of analyzing a single file"""
-    file_path: Path
-    language: str
-    agents_found: List[Dict[str, Any]]
-    has_llm_calls: bool
-    framework_indicators: List[str]
-    confidence_score: float
-    analysis_time: float
+    language_distribution: Dict[str, int]
+    ast_analysis_results: List[AnalysisResult]
+    llm_detection_results: List[DetectionResult]
+    code_quality_metrics: Dict[str, Any]
+    migration_opportunities: Dict[str, Any]
     errors: List[str]
 
 
 class CodebaseScanner:
     """
-    Advanced codebase scanning system for agent discovery
-    
-    Scans codebases to discover AI agents, analyze their capabilities,
-    and extract metadata for integration into the Mark-1 system.
+    Enhanced codebase scanner with multi-language AST analysis and LLM detection
     """
     
     def __init__(self):
-        self.settings = get_settings()
-        self.logger = structlog.get_logger(self.__class__.__name__)
-        
-        # Scanner state
+        self.logger = structlog.get_logger(__name__)
         self._initialized = False
-        self._active_scans: Dict[str, ScanResult] = {}
-        self._scan_counter = 0
         
-        # Language support
-        self._supported_extensions = {
-            '.py': 'python',
-            '.js': 'javascript', 
-            '.ts': 'typescript',
-            '.jsx': 'javascript',
-            '.tsx': 'typescript',
-            '.rs': 'rust',
-            '.go': 'go',
-            '.java': 'java',
-            '.cpp': 'cpp',
-            '.c': 'c',
-            '.cs': 'csharp'
-        }
+        # Initialize analyzers
+        self.ast_analyzer = MultiLanguageASTAnalyzer()
+        self.llm_detector = LLMCallDetector()
         
-        # Framework patterns
-        self._framework_patterns = {
-            'langchain': [
-                'from langchain',
-                'import langchain',
-                'LangChain',
-                'langchain_core',
-                'langchain_community'
-            ],
-            'autogpt': [
-                'from autogpt',
-                'import autogpt',
-                'AutoGPT',
-                'auto_gpt'
-            ],
-            'crewai': [
-                'from crewai',
-                'import crewai',
-                'CrewAI',
-                'crew_ai'
-            ],
-            'openai': [
-                'openai.ChatCompletion',
-                'openai.Completion',
-                'from openai',
-                'import openai'
-            ],
-            'anthropic': [
-                'from anthropic',
-                'import anthropic',
-                'anthropic.messages'
-            ]
-        }
+        # Supported file extensions
+        self.code_extensions = {'.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c'}
+        self.config_extensions = {'.json', '.yaml', '.yml', '.toml', '.ini'}
+        self.doc_extensions = {'.md', '.rst', '.txt'}
         
-        # LLM call patterns
-        self._llm_patterns = [
-            'openai.',
-            'anthropic.',
-            'ChatCompletion',
-            'chat.completions',
-            'llm.invoke',
-            'llm.ainvoke',
-            'messages.create',
-            'completions.create'
-        ]
-    
     async def initialize(self) -> None:
-        """Initialize the codebase scanner"""
+        """Initialize the scanner"""
+        if self._initialized:
+            return
+            
         try:
             self.logger.info("Initializing codebase scanner...")
-            
-            # Validate configuration
-            if not self.settings.scanning:
-                raise ScanningException("Scanning configuration not found")
-            
             self._initialized = True
             self.logger.info("Codebase scanner initialized successfully")
-            
         except Exception as e:
             self.logger.error("Failed to initialize codebase scanner", error=str(e))
-            raise ScanningException(f"Scanner initialization failed: {e}")
+            raise ScanException(f"Scanner initialization failed: {e}")
     
     async def scan_directory(
         self,
-        path: Path,
+        directory: Path,
         recursive: bool = True,
         framework_filter: Optional[List[str]] = None,
-        max_files: int = 10000,
-        exclude_patterns: Optional[List[str]] = None
-    ) -> ScanResult:
+        include_ast_analysis: bool = True,
+        include_llm_detection: bool = True
+    ) -> ScanResults:
         """
-        Scan a directory for AI agents
+        Comprehensive directory scan with multiple analysis types
         
         Args:
-            path: Directory path to scan
+            directory: Directory to scan
             recursive: Whether to scan recursively
             framework_filter: Optional framework filter
-            max_files: Maximum files to scan
-            exclude_patterns: Patterns to exclude
+            include_ast_analysis: Whether to include AST analysis
+            include_llm_detection: Whether to include LLM call detection
             
         Returns:
-            ScanResult with discovered agents and statistics
+            Comprehensive scan results
         """
-        if not self._initialized:
-            raise ScanningException("Scanner not initialized")
-        
-        # Generate scan ID
-        self._scan_counter += 1
-        scan_id = f"scan_{self._scan_counter}_{int(datetime.now().timestamp())}"
-        
-        self.logger.info("Starting codebase scan", scan_id=scan_id, path=str(path))
-        start_time = asyncio.get_event_loop().time()
-        
-        # Initialize scan result
-        scan_result = ScanResult(
-            scan_id=scan_id,
-            scan_path=path,
-            status=ScanStatus.SCANNING,
-            discovered_agents=[],
-            total_files_scanned=0,
-            scan_duration=0.0,
-            framework_distribution={},
-            error_count=0,
-            errors=[],
-            started_at=datetime.now(timezone.utc)
-        )
-        
-        self._active_scans[scan_id] = scan_result
+        start_time = datetime.now(timezone.utc)
+        errors = []
         
         try:
-            # Validate scan path
-            if not path.exists():
-                raise InvalidCodebaseException(str(path), "Path does not exist")
+            self.logger.info("Starting comprehensive codebase scan", 
+                           directory=str(directory),
+                           recursive=recursive,
+                           include_ast=include_ast_analysis,
+                           include_llm=include_llm_detection)
             
-            if not path.is_dir():
-                raise InvalidCodebaseException(str(path), "Path is not a directory")
+            if not directory.exists():
+                raise ScanException(f"Directory not found: {directory}")
             
-            # Collect files to scan
-            files_to_scan = await self._collect_files(
-                path, recursive, exclude_patterns, max_files
+            # Collect all files
+            all_files = await self._collect_files(directory, recursive)
+            
+            # Initialize results
+            discovered_agents = []
+            ast_analysis_results = []
+            llm_detection_results = []
+            framework_distribution = {}
+            language_distribution = {}
+            
+            # Perform AST analysis
+            if include_ast_analysis:
+                self.logger.info("Performing AST analysis...")
+                ast_analysis_results = await self.ast_analyzer.analyze_directory(directory, recursive)
+                
+                # Extract agents from AST analysis
+                for result in ast_analysis_results:
+                    # Track language distribution
+                    lang = result.language.value
+                    language_distribution[lang] = language_distribution.get(lang, 0) + 1
+                    
+                    # Extract agent information from patterns
+                    for pattern in result.agent_patterns:
+                        agent = await self._pattern_to_agent_info(pattern, result)
+                        if agent:
+                            discovered_agents.append(agent)
+                            
+                            # Track framework distribution
+                            framework = agent.framework
+                            framework_distribution[framework] = framework_distribution.get(framework, 0) + 1
+            
+            # Perform LLM call detection
+            if include_llm_detection:
+                self.logger.info("Performing LLM call detection...")
+                llm_detection_results = await self.llm_detector.detect_directory(directory, recursive)
+            
+            # Apply framework filter if specified
+            if framework_filter:
+                discovered_agents = [
+                    agent for agent in discovered_agents 
+                    if agent.framework.lower() in [f.lower() for f in framework_filter]
+                ]
+            
+            # Calculate metrics and opportunities
+            code_quality_metrics = await self._calculate_quality_metrics(ast_analysis_results)
+            migration_opportunities = await self._analyze_migration_opportunities(llm_detection_results)
+            
+            scan_duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+            
+            results = ScanResults(
+                scan_path=directory,
+                discovered_agents=discovered_agents,
+                total_files_scanned=len(all_files),
+                scan_duration=scan_duration,
+                framework_distribution=framework_distribution,
+                language_distribution=language_distribution,
+                ast_analysis_results=ast_analysis_results,
+                llm_detection_results=llm_detection_results,
+                code_quality_metrics=code_quality_metrics,
+                migration_opportunities=migration_opportunities,
+                errors=errors
             )
             
-            self.logger.info("Files collected for scanning", 
-                           count=len(files_to_scan), scan_id=scan_id)
-            
-            # Scan files in batches
-            batch_size = 50
-            for i in range(0, len(files_to_scan), batch_size):
-                batch = files_to_scan[i:i + batch_size]
-                await self._scan_file_batch(batch, scan_result, framework_filter)
-                
-                # Update progress
-                scan_result.total_files_scanned = min(i + batch_size, len(files_to_scan))
-            
-            # Finalize scan
-            scan_result.status = ScanStatus.COMPLETED
-            scan_result.completed_at = datetime.now(timezone.utc)
-            scan_result.scan_duration = asyncio.get_event_loop().time() - start_time
-            
             self.logger.info("Codebase scan completed",
-                           scan_id=scan_id,
-                           agents_found=len(scan_result.discovered_agents),
-                           files_scanned=scan_result.total_files_scanned,
-                           duration=scan_result.scan_duration)
+                           directory=str(directory),
+                           agents_found=len(discovered_agents),
+                           files_scanned=len(all_files),
+                           duration=scan_duration)
             
-            return scan_result
+            return results
             
         except Exception as e:
-            scan_result.status = ScanStatus.FAILED
-            scan_result.errors.append(str(e))
-            scan_result.error_count += 1
-            scan_result.completed_at = datetime.now(timezone.utc)
-            scan_result.scan_duration = asyncio.get_event_loop().time() - start_time
+            errors.append(f"Scan error: {str(e)}")
+            self.logger.error("Codebase scan failed", directory=str(directory), error=str(e))
             
-            self.logger.error("Codebase scan failed", scan_id=scan_id, error=str(e))
-            raise ScanningException(f"Scan failed: {e}")
+            scan_duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+            
+            return ScanResults(
+                scan_path=directory,
+                discovered_agents=[],
+                total_files_scanned=0,
+                scan_duration=scan_duration,
+                framework_distribution={},
+                language_distribution={},
+                ast_analysis_results=[],
+                llm_detection_results=[],
+                code_quality_metrics={},
+                migration_opportunities={},
+                errors=errors
+            )
     
-    async def _collect_files(
-        self,
-        path: Path,
-        recursive: bool,
-        exclude_patterns: Optional[List[str]],
-        max_files: int
-    ) -> List[Path]:
-        """Collect files to scan"""
+    async def _collect_files(self, directory: Path, recursive: bool) -> List[Path]:
+        """Collect all relevant files from directory"""
         files = []
-        exclude_patterns = exclude_patterns or self.settings.scanning.excluded_directories
         
         try:
             if recursive:
-                pattern = "**/*"
+                all_paths = list(directory.rglob("*"))
             else:
-                pattern = "*"
+                all_paths = list(directory.iterdir())
             
-            for file_path in path.glob(pattern):
-                if len(files) >= max_files:
-                    break
-                
-                # Skip directories
-                if file_path.is_dir():
-                    continue
-                
-                # Skip excluded patterns
-                if self._should_exclude_file(file_path, exclude_patterns):
-                    continue
-                
-                # Check file extension
-                if file_path.suffix not in self._supported_extensions:
-                    continue
-                
-                # Check file size
-                try:
-                    file_size = file_path.stat().st_size
-                    max_size_bytes = self.settings.scanning.max_file_size_mb * 1024 * 1024
-                    if file_size > max_size_bytes:
-                        continue
-                except (OSError, PermissionError):
-                    continue
-                
-                files.append(file_path)
+            # Filter for relevant files
+            relevant_extensions = self.code_extensions | self.config_extensions | self.doc_extensions
+            
+            for path in all_paths:
+                if path.is_file() and path.suffix.lower() in relevant_extensions:
+                    # Skip hidden files and common ignore patterns
+                    if not any(part.startswith('.') for part in path.parts):
+                        if not any(ignore in str(path) for ignore in ['__pycache__', 'node_modules', '.git']):
+                            files.append(path)
             
             return files
             
         except Exception as e:
-            self.logger.error("Failed to collect files", path=str(path), error=str(e))
+            self.logger.error("File collection failed", directory=str(directory), error=str(e))
             return []
     
-    def _should_exclude_file(self, file_path: Path, exclude_patterns: List[str]) -> bool:
-        """Check if file should be excluded"""
-        path_str = str(file_path)
-        
-        for pattern in exclude_patterns:
-            if pattern in path_str:
-                return True
-        
-        # Check against default excluded extensions
-        if file_path.suffix in self.settings.scanning.excluded_extensions:
-            return True
-        
-        return False
-    
-    async def _scan_file_batch(
-        self,
-        files: List[Path],
-        scan_result: ScanResult,
-        framework_filter: Optional[List[str]]
-    ) -> None:
-        """Scan a batch of files"""
-        tasks = []
-        
-        for file_path in files:
-            task = asyncio.create_task(self._analyze_file(file_path))
-            tasks.append(task)
-        
-        # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Process results
-        for i, result in enumerate(results):
-            file_path = files[i]
-            
-            if isinstance(result, Exception):
-                scan_result.errors.append(f"Error analyzing {file_path}: {result}")
-                scan_result.error_count += 1
-                continue
-            
-            if not isinstance(result, FileAnalysisResult):
-                continue
-            
-            # Apply framework filter
-            if framework_filter:
-                if not any(fw in result.framework_indicators for fw in framework_filter):
-                    continue
-            
-            # Process discovered agents
-            for agent_data in result.agents_found:
-                agent_info = AgentDiscoveryInfo(
-                    name=agent_data.get('name', file_path.stem),
-                    framework=agent_data.get('framework', 'unknown'),
-                    file_path=file_path,
-                    capabilities=agent_data.get('capabilities', []),
-                    confidence=agent_data.get('confidence', result.confidence_score),
-                    metadata={
-                        'language': result.language,
-                        'has_llm_calls': result.has_llm_calls,
-                        'framework_indicators': result.framework_indicators,
-                        'file_size': file_path.stat().st_size,
-                        'analysis_time': result.analysis_time
-                    },
-                    created_at=datetime.now(timezone.utc)
-                )
-                
-                scan_result.discovered_agents.append(agent_info)
-                
-                # Update framework distribution
-                framework = agent_info.framework
-                scan_result.framework_distribution[framework] = (
-                    scan_result.framework_distribution.get(framework, 0) + 1
-                )
-    
-    async def _analyze_file(self, file_path: Path) -> FileAnalysisResult:
-        """Analyze a single file for agent patterns"""
-        start_time = asyncio.get_event_loop().time()
-        
+    async def _pattern_to_agent_info(self, pattern: Dict[str, Any], analysis_result: AnalysisResult) -> Optional[AgentInfo]:
+        """Convert detected pattern to AgentInfo"""
         try:
-            # Determine language
-            language = self._supported_extensions.get(file_path.suffix, 'unknown')
+            # Extract basic information
+            name = pattern.get('name', 'Unknown')
+            framework = pattern.get('framework', 'unknown')
+            capabilities = pattern.get('capabilities', [])
+            confidence = pattern.get('confidence', 0.0)
             
-            # Read file content
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-            except Exception as e:
-                raise ParseException(str(file_path), language, e)
-            
-            # Analyze content
-            framework_indicators = self._detect_frameworks(content)
-            has_llm_calls = self._detect_llm_calls(content)
-            agents_found = []
-            confidence_score = 0.0
-            
-            # Check for agent patterns
-            if framework_indicators or has_llm_calls:
-                agent_data = await self._extract_agent_info(
-                    file_path, content, language, framework_indicators
-                )
-                
-                if agent_data:
-                    agents_found.append(agent_data)
-                    confidence_score = agent_data.get('confidence', 0.5)
-            
-            analysis_time = asyncio.get_event_loop().time() - start_time
-            
-            return FileAnalysisResult(
-                file_path=file_path,
-                language=language,
-                agents_found=agents_found,
-                has_llm_calls=has_llm_calls,
-                framework_indicators=framework_indicators,
-                confidence_score=confidence_score,
-                analysis_time=analysis_time,
-                errors=[]
-            )
-            
-        except Exception as e:
-            analysis_time = asyncio.get_event_loop().time() - start_time
-            
-            return FileAnalysisResult(
-                file_path=file_path,
-                language=self._supported_extensions.get(file_path.suffix, 'unknown'),
-                agents_found=[],
-                has_llm_calls=False,
-                framework_indicators=[],
-                confidence_score=0.0,
-                analysis_time=analysis_time,
-                errors=[str(e)]
-            )
-    
-    def _detect_frameworks(self, content: str) -> List[str]:
-        """Detect framework usage in content"""
-        detected_frameworks = []
-        
-        for framework, patterns in self._framework_patterns.items():
-            for pattern in patterns:
-                if pattern in content:
-                    detected_frameworks.append(framework)
-                    break
-        
-        return detected_frameworks
-    
-    def _detect_llm_calls(self, content: str) -> bool:
-        """Detect LLM API calls in content"""
-        for pattern in self._llm_patterns:
-            if pattern in content:
-                return True
-        return False
-    
-    async def _extract_agent_info(
-        self,
-        file_path: Path,
-        content: str,
-        language: str,
-        framework_indicators: List[str]
-    ) -> Optional[Dict[str, Any]]:
-        """Extract agent information from file content"""
-        try:
-            # Basic agent info
-            agent_info = {
-                'name': file_path.stem,
-                'framework': framework_indicators[0] if framework_indicators else 'custom',
-                'capabilities': [],
-                'confidence': 0.5,
-                'entry_point': None,
-                'dependencies': []
+            # Build metadata
+            metadata = {
+                'pattern_type': pattern.get('type'),
+                'base_classes': pattern.get('base_classes', []),
+                'methods': pattern.get('methods', []),
+                'language': analysis_result.language.value,
+                'analysis_time': analysis_result.analysis_time,
+                'complexity_score': analysis_result.complexity_score
             }
             
-            # Language-specific analysis
-            if language == 'python':
-                await self._analyze_python_agent(content, agent_info)
-            elif language in ['javascript', 'typescript']:
-                await self._analyze_js_agent(content, agent_info)
+            # Add quality metrics if available
+            if analysis_result.quality_metrics:
+                metadata['quality_metrics'] = analysis_result.quality_metrics
             
-            # Calculate confidence score
-            confidence = 0.3  # Base confidence
-            
-            if framework_indicators:
-                confidence += 0.3
-            
-            if self._detect_llm_calls(content):
-                confidence += 0.2
-            
-            if agent_info['capabilities']:
-                confidence += 0.2
-            
-            agent_info['confidence'] = min(confidence, 1.0)
-            
-            return agent_info
+            return AgentInfo(
+                name=name,
+                file_path=analysis_result.file_path,
+                framework=framework,
+                capabilities=capabilities,
+                confidence=confidence,
+                metadata=metadata,
+                module_path=str(analysis_result.file_path.with_suffix('')).replace('/', '.'),
+                class_name=name
+            )
             
         except Exception as e:
-            self.logger.error("Failed to extract agent info", 
-                            file_path=str(file_path), error=str(e))
+            self.logger.warning("Failed to convert pattern to agent info", error=str(e))
             return None
     
-    async def _analyze_python_agent(self, content: str, agent_info: Dict[str, Any]) -> None:
-        """Analyze Python agent code"""
+    async def _calculate_quality_metrics(self, ast_results: List[AnalysisResult]) -> Dict[str, Any]:
+        """Calculate overall code quality metrics"""
+        if not ast_results:
+            return {}
+        
         try:
-            # Look for common agent patterns
-            if 'class' in content and 'Agent' in content:
-                agent_info['capabilities'].append('agent_class')
+            total_files = len(ast_results)
+            total_elements = sum(len(r.elements) for r in ast_results)
+            total_lines = sum(r.quality_metrics.get('total_lines', 0) for r in ast_results)
             
-            if 'def run' in content or 'def execute' in content:
-                agent_info['capabilities'].append('execution')
+            # Calculate averages
+            avg_complexity = sum(r.complexity_score for r in ast_results) / total_files
+            avg_documentation_ratio = sum(
+                r.quality_metrics.get('documentation_ratio', 0) for r in ast_results
+            ) / total_files
             
-            if 'def chat' in content or 'def invoke' in content:
-                agent_info['capabilities'].append('conversation')
+            # Count patterns and capabilities
+            total_patterns = sum(len(r.agent_patterns) for r in ast_results)
+            all_capabilities = set()
+            for result in ast_results:
+                all_capabilities.update(result.capabilities)
             
-            # Look for imports to determine entry point
-            lines = content.split('\n')
-            for line in lines:
-                line = line.strip()
-                if line.startswith('def main'):
-                    agent_info['entry_point'] = 'main'
-                    break
-                elif line.startswith('if __name__ == "__main__"'):
-                    agent_info['entry_point'] = '__main__'
-                    break
+            # Error analysis
+            files_with_errors = len([r for r in ast_results if r.errors])
+            total_errors = sum(len(r.errors) for r in ast_results)
             
-            # Extract dependencies from imports
-            for line in lines:
-                line = line.strip()
-                if line.startswith('import ') or line.startswith('from '):
-                    # Simple dependency extraction
-                    if 'langchain' in line:
-                        agent_info['dependencies'].append('langchain')
-                    elif 'openai' in line:
-                        agent_info['dependencies'].append('openai')
-                    elif 'anthropic' in line:
-                        agent_info['dependencies'].append('anthropic')
+            return {
+                'total_files_analyzed': total_files,
+                'total_code_elements': total_elements,
+                'total_lines_of_code': total_lines,
+                'average_complexity': round(avg_complexity, 2),
+                'average_documentation_ratio': round(avg_documentation_ratio, 2),
+                'total_agent_patterns': total_patterns,
+                'unique_capabilities': len(all_capabilities),
+                'files_with_errors': files_with_errors,
+                'total_analysis_errors': total_errors,
+                'analysis_success_rate': round((total_files - files_with_errors) / total_files, 2) if total_files > 0 else 0
+            }
             
         except Exception as e:
-            self.logger.debug("Python analysis failed", error=str(e))
+            self.logger.error("Quality metrics calculation failed", error=str(e))
+            return {'error': str(e)}
     
-    async def _analyze_js_agent(self, content: str, agent_info: Dict[str, Any]) -> None:
-        """Analyze JavaScript/TypeScript agent code"""
+    async def _analyze_migration_opportunities(self, llm_results: List[DetectionResult]) -> Dict[str, Any]:
+        """Analyze opportunities for migrating to local LLM"""
+        if not llm_results:
+            return {'total_opportunities': 0}
+        
         try:
-            # Look for common patterns
-            if 'class' in content and ('Agent' in content or 'Bot' in content):
-                agent_info['capabilities'].append('agent_class')
+            # Generate migration report
+            migration_report = self.llm_detector.generate_migration_report(llm_results)
             
-            if 'function run' in content or 'function execute' in content:
-                agent_info['capabilities'].append('execution')
+            # Add additional analysis
+            total_files_with_llm = len(llm_results)
+            total_llm_calls = sum(r.total_calls for r in llm_results)
             
-            if 'async function' in content:
-                agent_info['capabilities'].append('async_execution')
+            # Analyze complexity distribution
+            complexity_distribution = {}
+            for result in llm_results:
+                providers = [p.value for p in result.providers_found]
+                complexity = 'low' if len(providers) == 1 else 'medium' if len(providers) == 2 else 'high'
+                complexity_distribution[complexity] = complexity_distribution.get(complexity, 0) + 1
             
-            # Look for exports to determine entry point
-            if 'module.exports' in content or 'export default' in content:
-                agent_info['entry_point'] = 'export'
+            # Calculate potential impact
+            estimated_savings = migration_report['summary'].get('potential_savings', 0)
+            impact_level = 'low' if estimated_savings < 100 else 'medium' if estimated_savings < 500 else 'high'
+            
+            migration_opportunities = {
+                **migration_report,
+                'analysis': {
+                    'files_with_llm_calls': total_files_with_llm,
+                    'total_llm_calls': total_llm_calls,
+                    'complexity_distribution': complexity_distribution,
+                    'estimated_impact': impact_level,
+                    'recommended_priority': self._calculate_migration_priority(llm_results)
+                }
+            }
+            
+            return migration_opportunities
             
         except Exception as e:
-            self.logger.debug("JavaScript analysis failed", error=str(e))
+            self.logger.error("Migration opportunity analysis failed", error=str(e))
+            return {'error': str(e)}
     
-    async def get_scan_result(self, scan_id: str) -> Optional[ScanResult]:
-        """Get scan result by ID"""
-        return self._active_scans.get(scan_id)
-    
-    async def list_active_scans(self) -> List[ScanResult]:
-        """List all active scans"""
-        return list(self._active_scans.values())
-    
-    async def cancel_scan(self, scan_id: str) -> bool:
-        """Cancel an active scan"""
-        if scan_id in self._active_scans:
-            scan_result = self._active_scans[scan_id]
-            scan_result.status = ScanStatus.CANCELLED
-            scan_result.completed_at = datetime.now(timezone.utc)
-            return True
-        return False
-    
-    async def clear_completed_scans(self) -> int:
-        """Clear completed scans from memory"""
-        completed_scan_ids = [
-            scan_id for scan_id, result in self._active_scans.items()
-            if result.status in [ScanStatus.COMPLETED, ScanStatus.FAILED, ScanStatus.CANCELLED]
-        ]
+    def _calculate_migration_priority(self, llm_results: List[DetectionResult]) -> str:
+        """Calculate migration priority based on usage patterns"""
+        if not llm_results:
+            return 'none'
         
-        for scan_id in completed_scan_ids:
-            del self._active_scans[scan_id]
+        total_calls = sum(r.total_calls for r in llm_results)
+        total_cost = sum(r.estimated_monthly_cost for r in llm_results)
+        unique_providers = set()
         
-        return len(completed_scan_ids)
+        for result in llm_results:
+            unique_providers.update(result.providers_found)
+        
+        # Priority calculation
+        if total_cost > 500 or total_calls > 50:
+            return 'high'
+        elif total_cost > 100 or total_calls > 20:
+            return 'medium'
+        elif total_calls > 0:
+            return 'low'
+        else:
+            return 'none'
+    
+    async def analyze_single_file(self, file_path: Path) -> Dict[str, Any]:
+        """Perform comprehensive analysis on a single file"""
+        try:
+            self.logger.info("Analyzing single file", file_path=str(file_path))
+            
+            results = {}
+            
+            # AST Analysis
+            ast_result = await self.ast_analyzer.analyze_file(file_path)
+            if ast_result:
+                results['ast_analysis'] = {
+                    'language': ast_result.language.value,
+                    'elements': len(ast_result.elements),
+                    'imports': ast_result.imports,
+                    'framework_indicators': ast_result.framework_indicators,
+                    'agent_patterns': ast_result.agent_patterns,
+                    'capabilities': ast_result.capabilities,
+                    'complexity_score': ast_result.complexity_score,
+                    'quality_metrics': ast_result.quality_metrics,
+                    'analysis_time': ast_result.analysis_time
+                }
+            
+            # LLM Detection
+            llm_result = await self.llm_detector.detect_file(file_path)
+            if llm_result.calls:
+                results['llm_detection'] = {
+                    'total_calls': llm_result.total_calls,
+                    'providers_found': [p.value for p in llm_result.providers_found],
+                    'call_types': [c.value for c in llm_result.call_types_found],
+                    'estimated_monthly_cost': llm_result.estimated_monthly_cost,
+                    'replacement_suggestions': len(llm_result.replacement_suggestions),
+                    'analysis_time': llm_result.analysis_time
+                }
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error("Single file analysis failed", file_path=str(file_path), error=str(e))
+            return {'error': str(e)}
+    
+    def get_scan_summary(self, results: ScanResults) -> Dict[str, Any]:
+        """Generate a summary of scan results"""
+        return {
+            'scan_overview': {
+                'path': str(results.scan_path),
+                'duration': results.scan_duration,
+                'files_scanned': results.total_files_scanned,
+                'agents_discovered': len(results.discovered_agents)
+            },
+            'distribution': {
+                'frameworks': results.framework_distribution,
+                'languages': results.language_distribution
+            },
+            'quality': results.code_quality_metrics,
+            'migration': {
+                'total_opportunities': len(results.llm_detection_results),
+                'complexity': results.migration_opportunities.get('migration_complexity', 'unknown')
+            },
+            'errors': len(results.errors)
+        }
     
     @property
     def is_initialized(self) -> bool:
         """Check if scanner is initialized"""
         return self._initialized
-    
-    @property
-    def active_scan_count(self) -> int:
-        """Get number of active scans"""
-        return len([s for s in self._active_scans.values() if s.status == ScanStatus.SCANNING])
-    
-    @property
-    def supported_languages(self) -> List[str]:
-        """Get list of supported programming languages"""
-        return list(set(self._supported_extensions.values()))
-    
-    async def shutdown(self) -> None:
-        """Shutdown the scanner"""
-        try:
-            self.logger.info("Shutting down codebase scanner...")
-            
-            # Cancel all active scans
-            for scan_id in list(self._active_scans.keys()):
-                await self.cancel_scan(scan_id)
-            
-            self._active_scans.clear()
-            self._initialized = False
-            
-            self.logger.info("Codebase scanner shutdown complete")
-            
-        except Exception as e:
-            self.logger.error("Error during scanner shutdown", error=str(e))

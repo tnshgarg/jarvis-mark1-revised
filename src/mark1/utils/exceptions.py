@@ -645,3 +645,40 @@ def create_error_context(**kwargs) -> Dict[str, Any]:
 
 # Backwards compatibility aliases
 ValidationError = ValidationException  # For backwards compatibility
+
+
+class AnalysisException(Mark1BaseException):
+    """Exception raised during code analysis operations"""
+    def __init__(self, message: str, analysis_type: str = None, file_path: str = None):
+        super().__init__(message)
+        self.analysis_type = analysis_type
+        self.file_path = file_path
+
+
+class ParseException(Mark1BaseException):
+    """Exception raised during code parsing operations"""
+    def __init__(self, message: str, file_path: str = None, language: str = None):
+        super().__init__(message)
+        self.file_path = file_path
+        self.language = language
+
+
+class DetectionException(Mark1BaseException):
+    """Exception raised during detection operations"""
+    def __init__(self, message: str, detection_type: str = None):
+        super().__init__(message)
+        self.detection_type = detection_type
+
+
+class ReplacementException(Mark1BaseException):
+    """Exception raised during code replacement operations"""
+    def __init__(self, message: str, replacement_type: str = None):
+        super().__init__(message)
+        self.replacement_type = replacement_type
+
+
+class ScanException(Mark1BaseException):
+    """Exception raised during codebase scanning operations"""
+    def __init__(self, message: str, scan_path: str = None):
+        super().__init__(message)
+        self.scan_path = scan_path

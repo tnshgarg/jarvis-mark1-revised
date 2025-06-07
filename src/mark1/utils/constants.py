@@ -653,45 +653,24 @@ DEFAULT_CONFIG = {
 AGENT_DISCOVERY_PATHS = [
     "agents/",
     "src/agents/",
-    "app/agents/",
-    "lib/agents/",
-    "modules/agents/",
-    "./",
-    "src/",
-    "app/",
-    "lib/",
-    "modules/"
+    "mark1/agents/",
+    "."
 ]
 
 # File patterns for agent detection
-AGENT_FILE_PATTERNS = {
-    "langchain": [
-        r".*agent.*\.py$",
-        r".*chain.*\.py$",
-        r".*tool.*\.py$",
-        r".*executor.*\.py$"
-    ],
-    "crewai": [
-        r".*crew.*\.py$",
-        r".*agent.*\.py$",
-        r".*task.*\.py$"
-    ],
-    "autogpt": [
-        r".*autogpt.*\.py$",
-        r".*agent.*\.py$",
-        r".*plugin.*\.py$"
-    ],
-    "custom": [
-        r".*agent.*\.py$",
-        r".*bot.*\.py$",
-        r".*assistant.*\.py$"
-    ]
-}
+AGENT_FILE_PATTERNS = [
+    "**/*agent*.py",
+    "**/*bot*.py", 
+    "**/*assistant*.py",
+    "**/agent.py",
+    "**/main.py"
+]
 
 # Agent detection keywords and patterns
 AGENT_KEYWORDS = [
-    "agent", "chain", "tool", "executor", "crew", "task",
-    "autogpt", "plugin", "bot", "assistant", "llm", "ai"
+    'agent', 'bot', 'assistant', 'ai', 'llm', 'gpt', 'chat',
+    'executor', 'runner', 'processor', 'handler', 'orchestrator',
+    'manager', 'controller', 'coordinator', 'planner', 'worker'
 ]
 
 # Framework detection patterns
