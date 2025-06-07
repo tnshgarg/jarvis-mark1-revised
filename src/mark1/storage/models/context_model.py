@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, validates
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -85,9 +85,9 @@ class ContextModel(Base):
     
     # Content storage
     title = Column(String(500), nullable=True)
-    content = Column(JSONB, nullable=True)  # Structured content
+    content = Column(JSON, nullable=True)  # Structured content
     raw_content = Column(Text, nullable=True)  # Raw text content
-    extra_metadata = Column(JSONB, nullable=True)  # Additional metadata
+    extra_metadata = Column(JSON, nullable=True)  # Additional metadata
     
     # Context management
     token_count = Column(Integer, nullable=True, default=0)
@@ -107,8 +107,8 @@ class ContextModel(Base):
     
     # Relationships
     parent_context = relationship("ContextModel", remote_side=[id], backref="child_contexts")
-    agent = relationship("AgentModel", back_populates="contexts")
-    task = relationship("TaskModel", back_populates="contexts")
+    agent = relationship("Agent", back_populates="contexts")
+    tasks = relationship("Task", back_populates="context", foreign_keys="Task.context_id")
     
     # Indexes for performance
     __table_args__ = (

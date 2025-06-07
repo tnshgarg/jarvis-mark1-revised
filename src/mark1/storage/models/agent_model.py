@@ -160,12 +160,12 @@ class Agent(Base):
     
     tasks = relationship(
         "Task",
-        back_populates="assigned_agent",
+        back_populates="agent",
         lazy="select"
     )
     
-    executions = relationship(
-        "TaskExecution",
+    contexts = relationship(
+        "ContextModel",
         back_populates="agent",
         lazy="select"
     )

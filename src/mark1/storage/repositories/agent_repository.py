@@ -65,7 +65,7 @@ class AgentRepository(DatabaseRepository):
                 capabilities=capabilities or [],
                 metadata=metadata or {},
                 confidence=confidence,
-                status=AgentStatus.AVAILABLE,
+                status=AgentStatus.READY,
                 created_at=datetime.now(timezone.utc)
             )
             
@@ -350,7 +350,7 @@ class AgentRepository(DatabaseRepository):
             query = select(Agent).where(
                 and_(
                     Agent.capabilities.op('?')(capability),
-                    Agent.status == AgentStatus.AVAILABLE
+                    Agent.status == AgentStatus.READY
                 )
             )
             

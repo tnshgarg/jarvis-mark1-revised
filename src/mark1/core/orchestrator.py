@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any, Set, Union
 from dataclasses import dataclass
 from enum import Enum
 import structlog
+from sqlalchemy import text
 
 from mark1.config.settings import get_settings
 from mark1.storage.database import get_db_session
@@ -22,7 +23,7 @@ from mark1.storage.repositories.agent_repository import AgentRepository
 from mark1.storage.repositories.task_repository import TaskRepository
 from mark1.storage.repositories.context_repository import ContextRepository
 from mark1.agents.registry import AgentRegistry
-from mark1.agents.discovery import AgentDiscovery
+from mark1.agents.discovery import AgentDiscoveryEngine
 from mark1.agents.pool import AgentPool
 from mark1.core.task_planner import TaskPlanner
 from mark1.core.workflow_engine import WorkflowEngine
@@ -111,7 +112,7 @@ class Mark1Orchestrator:
         
         # Core components
         self.agent_registry: Optional[AgentRegistry] = None
-        self.agent_discovery: Optional[AgentDiscovery] = None
+        self.agent_discovery: Optional[AgentDiscoveryEngine] = None
         self.agent_pool: Optional[AgentPool] = None
         self.task_planner: Optional[TaskPlanner] = None
         self.workflow_engine: Optional[WorkflowEngine] = None
@@ -129,9 +130,15 @@ class Mark1Orchestrator:
         self._active_tasks: Set[str] = set()
         self._shutdown_event = asyncio.Event()
         self._health_check_task: Optional[asyncio.Task] = None
+        self._auto_discovery_task: Optional[asyncio.Task] = None
+        self._initialized = False
         
     async def initialize(self) -> None:
         """Initialize the orchestrator and all its components"""
+        if self._initialized:
+            self.logger.warning("Orchestrator already initialized")
+            return
+            
         try:
             self.logger.info("Initializing Mark-1 orchestrator...")
             
@@ -145,6 +152,7 @@ class Mark1Orchestrator:
             await self._start_background_tasks()
             
             self._status = SystemStatus.HEALTHY
+            self._initialized = True
             self.logger.info("Mark-1 orchestrator initialized successfully")
             
         except Exception as e:
@@ -156,67 +164,90 @@ class Mark1Orchestrator:
         """Initialize data repositories"""
         self.logger.debug("Initializing repositories...")
         
-        async with get_db_session() as session:
-            self.agent_repo = AgentRepository(session)
-            self.task_repo = TaskRepository(session)
-            self.context_repo = ContextRepository(session)
+        # Note: Repositories are created per-session basis in actual usage
+        # This is just to ensure the structure is available
+        self.logger.debug("Repository initialization completed")
     
     async def _initialize_components(self) -> None:
         """Initialize core orchestrator components"""
         self.logger.debug("Initializing core components...")
         
-        # Initialize agent management
-        self.agent_registry = AgentRegistry()
-        self.agent_discovery = AgentDiscovery(self.agent_registry)
-        self.agent_pool = AgentPool(
-            max_concurrent=self.settings.agents.max_concurrent_agents,
-            agent_timeout=self.settings.agents.agent_timeout_seconds
-        )
-        
-        # Initialize planning and execution
-        self.task_planner = TaskPlanner()
-        self.workflow_engine = WorkflowEngine()
-        self.context_manager = ContextManager()
-        
-        # Initialize scanning and LLM
-        self.codebase_scanner = CodebaseScanner()
-        self.model_manager = ModelManager()
-        
-        # Initialize all components
-        await self.agent_registry.initialize()
-        await self.agent_discovery.initialize()
-        await self.agent_pool.initialize()
-        await self.task_planner.initialize()
-        await self.workflow_engine.initialize()
-        await self.context_manager.initialize()
-        await self.codebase_scanner.initialize()
-        await self.model_manager.initialize()
+        try:
+            # Initialize agent management
+            self.agent_registry = AgentRegistry()
+            await self.agent_registry.initialize()
+            self.logger.debug("Agent registry initialized")
+            
+            self.agent_discovery = AgentDiscoveryEngine()
+            await self.agent_discovery.initialize()
+            self.logger.debug("Agent discovery engine initialized")
+            
+            self.agent_pool = AgentPool(
+                max_concurrent=getattr(self.settings, 'max_concurrent_agents', 10),
+                agent_timeout=getattr(self.settings, 'agent_timeout_seconds', 300)
+            )
+            await self.agent_pool.initialize()
+            self.logger.debug("Agent pool initialized")
+            
+            # Initialize planning and execution
+            self.task_planner = TaskPlanner()
+            await self.task_planner.initialize()
+            self.logger.debug("Task planner initialized")
+            
+            self.workflow_engine = WorkflowEngine()
+            await self.workflow_engine.initialize()
+            self.logger.debug("Workflow engine initialized")
+            
+            self.context_manager = ContextManager()
+            await self.context_manager.initialize()
+            self.logger.debug("Context manager initialized")
+            
+            # Initialize scanning and LLM
+            self.codebase_scanner = CodebaseScanner()
+            await self.codebase_scanner.initialize()
+            self.logger.debug("Codebase scanner initialized")
+            
+            self.model_manager = ModelManager()
+            await self.model_manager.initialize()
+            self.logger.debug("Model manager initialized")
+            
+            self.logger.info("All core components initialized successfully")
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize components", error=str(e))
+            raise
     
     async def _start_background_tasks(self) -> None:
         """Start background monitoring and maintenance tasks"""
         self.logger.debug("Starting background tasks...")
         
-        # Start health check task
-        self._health_check_task = asyncio.create_task(self._health_check_loop())
-        
-        # Start agent discovery if enabled
-        if self.settings.agents.auto_discovery_enabled:
-            asyncio.create_task(self._auto_discovery_loop())
+        try:
+            # Start health check task
+            self._health_check_task = asyncio.create_task(self._health_check_loop())
+            
+            # Start auto-discovery task
+            self._auto_discovery_task = asyncio.create_task(self._auto_discovery_loop())
+            
+            self.logger.debug("Background tasks started")
+            
+        except Exception as e:
+            self.logger.error("Failed to start background tasks", error=str(e))
+            raise
     
     async def _health_check_loop(self) -> None:
-        """Continuous health checking loop"""
+        """Background health check loop"""
         while not self._shutdown_event.is_set():
             try:
                 await self._perform_health_check()
-                await asyncio.sleep(self.settings.monitoring.health_check_interval)
+                await asyncio.sleep(30)  # Check every 30 seconds
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self.logger.error("Health check failed", error=str(e))
-                await asyncio.sleep(30)  # Wait before retry
+                await asyncio.sleep(30)
     
     async def _auto_discovery_loop(self) -> None:
-        """Automatic agent discovery loop"""
+        """Background auto-discovery loop"""
         while not self._shutdown_event.is_set():
             try:
                 await self._discover_new_agents()
@@ -225,25 +256,24 @@ class Mark1Orchestrator:
                 break
             except Exception as e:
                 self.logger.error("Auto-discovery failed", error=str(e))
-                await asyncio.sleep(600)  # Wait longer before retry
+                await asyncio.sleep(300)
     
     async def _perform_health_check(self) -> None:
-        """Perform comprehensive system health check"""
+        """Perform comprehensive health check"""
         try:
+            # Check database connectivity
+            async with get_db_session() as session:
+                await session.execute(text("SELECT 1"))
+            
             # Check component health
-            components_health = await self._check_components_health()
+            component_health = await self._check_components_health()
             
             # Determine overall status
-            if all(status == "healthy" for status in components_health.values()):
-                if self._status == SystemStatus.ERROR:
-                    self.logger.info("System recovered to healthy status")
+            if all(status == "healthy" for status in component_health.values()):
                 self._status = SystemStatus.HEALTHY
+            elif any(status == "error" for status in component_health.values()):
+                self._status = SystemStatus.ERROR
             else:
-                unhealthy_components = [
-                    comp for comp, status in components_health.items() 
-                    if status != "healthy"
-                ]
-                self.logger.warning("System degraded", unhealthy_components=unhealthy_components)
                 self._status = SystemStatus.DEGRADED
                 
         except Exception as e:
@@ -252,40 +282,79 @@ class Mark1Orchestrator:
     
     async def _check_components_health(self) -> Dict[str, str]:
         """Check health of all components"""
-        health_checks = {}
+        health = {}
         
         try:
-            # Check database
-            async with get_db_session() as session:
-                await session.execute("SELECT 1")
-                health_checks["database"] = "healthy"
-        except Exception:
-            health_checks["database"] = "error"
+            # Check agent pool health
+            if self.agent_pool:
+                pool_health = await self.agent_pool.health_check()
+                health["agent_pool"] = "healthy" if pool_health.get("healthy", False) else "error"
+            else:
+                health["agent_pool"] = "not_initialized"
+            
+            # Check model manager health
+            if self.model_manager:
+                model_health = await self.model_manager.health_check()
+                health["model_manager"] = "healthy" if model_health.healthy else "error"
+            else:
+                health["model_manager"] = "not_initialized"
+            
+            # Check other components
+            components = {
+                "agent_registry": self.agent_registry,
+                "agent_discovery": self.agent_discovery,
+                "task_planner": self.task_planner,
+                "workflow_engine": self.workflow_engine,
+                "context_manager": self.context_manager,
+                "codebase_scanner": self.codebase_scanner
+            }
+            
+            for component_name, component in components.items():
+                if component:
+                    health[component_name] = "healthy"
+                else:
+                    health[component_name] = "not_initialized"
+                    
+        except Exception as e:
+            self.logger.error("Component health check failed", error=str(e))
+            health["health_check"] = "error"
         
-        # Check agent pool
-        if self.agent_pool:
-            pool_health = await self.agent_pool.health_check()
-            health_checks["agent_pool"] = "healthy" if pool_health["healthy"] else "error"
-        
-        # Check LLM provider
-        if self.model_manager:
-            llm_health = await self.model_manager.health_check()
-            health_checks["llm"] = "healthy" if llm_health["healthy"] else "error"
-        
-        return health_checks
+        return health
     
     async def _discover_new_agents(self) -> None:
-        """Discover new agents in configured directories"""
-        if not self.agent_discovery:
-            return
-            
+        """Discover and register new agents"""
         try:
-            agents_dir = self.settings.agents_dir
-            if agents_dir.exists():
-                await self.agent_discovery.scan_directory(agents_dir)
+            if not self.agent_discovery:
+                return
                 
+            # Discover agents in default paths
+            discovered_agents = self.agent_discovery.discover_all()
+            
+            # Register new agents
+            for agent_key, agent_metadata in discovered_agents.items():
+                try:
+                    if self.agent_registry:
+                        existing_agent = await self.agent_registry.get_agent_by_name(agent_metadata.name)
+                        if not existing_agent:
+                            await self.agent_registry.register_from_scan({
+                                "name": agent_metadata.name,
+                                "framework": "detected",
+                                "file_path": agent_metadata.file_path,
+                                "capabilities": agent_metadata.capabilities,
+                                "metadata": {
+                                    "discovered_at": datetime.now(timezone.utc).isoformat(),
+                                    "module_path": agent_metadata.module_path,
+                                    "class_name": agent_metadata.class_name
+                                }
+                            })
+                            self.logger.info("Auto-discovered and registered new agent", 
+                                           agent_name=agent_metadata.name)
+                except Exception as e:
+                    self.logger.warning("Failed to register discovered agent", 
+                                       agent_name=agent_metadata.name, error=str(e))
+                    
         except Exception as e:
-            self.logger.error("Agent auto-discovery failed", error=str(e))
+            self.logger.error("Auto-discovery failed", error=str(e))
     
     async def scan_codebase(
         self,
@@ -294,26 +363,27 @@ class Mark1Orchestrator:
         framework_filter: Optional[List[str]] = None
     ) -> ScanResult:
         """
-        Scan a codebase for AI agents
+        Scan codebase for agents and other AI components
         
         Args:
             path: Path to scan
             recursive: Whether to scan recursively
-            framework_filter: List of frameworks to filter for
+            framework_filter: Optional framework filter
             
         Returns:
-            ScanResult with discovered agents and statistics
+            Scan results
         """
         if not self.codebase_scanner:
             raise OrchestrationException("Codebase scanner not initialized")
         
-        self.logger.info("Starting codebase scan", path=str(path))
-        start_time = asyncio.get_event_loop().time()
+        start_time = datetime.now(timezone.utc)
         
         try:
+            self.logger.info("Starting codebase scan", path=str(path))
+            
             # Perform the scan
             scan_results = await self.codebase_scanner.scan_directory(
-                path=path,
+                path,
                 recursive=recursive,
                 framework_filter=framework_filter
             )
@@ -322,37 +392,23 @@ class Mark1Orchestrator:
             agents = []
             framework_distribution = {}
             
+            # Convert discovered agents to expected format
             for agent_info in scan_results.discovered_agents:
-                # Convert to dictionary format
-                agent_dict = {
+                agents.append({
                     "name": agent_info.name,
+                    "file_path": str(agent_info.file_path),
                     "framework": agent_info.framework,
                     "capabilities": agent_info.capabilities,
-                    "file_path": str(agent_info.file_path),
                     "confidence": agent_info.confidence,
                     "metadata": agent_info.metadata
-                }
-                agents.append(agent_dict)
+                })
                 
-                # Update framework distribution
                 framework = agent_info.framework
                 framework_distribution[framework] = framework_distribution.get(framework, 0) + 1
             
-            # Register discovered agents
-            if self.agent_registry:
-                for agent_dict in agents:
-                    await self.agent_registry.register_from_scan(agent_dict)
+            scan_duration = scan_results.scan_duration
             
-            scan_duration = asyncio.get_event_loop().time() - start_time
-            
-            self.logger.info(
-                "Codebase scan completed",
-                agents_found=len(agents),
-                duration=scan_duration,
-                frameworks=list(framework_distribution.keys())
-            )
-            
-            return ScanResult(
+            result = ScanResult(
                 path=path,
                 agents=agents,
                 total_files_scanned=scan_results.total_files_scanned,
@@ -360,8 +416,15 @@ class Mark1Orchestrator:
                 framework_distribution=framework_distribution
             )
             
+            self.logger.info("Codebase scan completed", 
+                           agents_found=len(agents),
+                           duration=scan_duration,
+                           path=str(path))
+            
+            return result
+            
         except Exception as e:
-            self.logger.error("Codebase scan failed", error=str(e), path=str(path))
+            self.logger.error("Codebase scan failed", path=str(path), error=str(e))
             raise OrchestrationException(f"Codebase scan failed: {e}")
     
     async def orchestrate_task(
@@ -372,148 +435,217 @@ class Mark1Orchestrator:
         timeout: int = 300
     ) -> OrchestrationResult:
         """
-        Orchestrate a task across multiple agents
+        Orchestrate a task across available agents
         
         Args:
-            task_description: Description of the task to perform
-            agent_filter: Optional list of specific agent IDs to use
-            max_agents: Maximum number of agents to involve
+            task_description: Description of the task to execute
+            agent_filter: Optional list of agent names to filter by
+            max_agents: Maximum number of agents to use
             timeout: Task timeout in seconds
             
         Returns:
-            OrchestrationResult with execution details
+            Orchestration result
         """
-        if not all([self.task_planner, self.workflow_engine, self.agent_pool]):
-            raise OrchestrationException("Core components not initialized")
+        if not self._initialized:
+            raise OrchestrationException("Orchestrator not initialized")
         
-        self.logger.info("Starting task orchestration", task=task_description)
-        start_time = asyncio.get_event_loop().time()
+        start_time = datetime.now(timezone.utc)
+        task_id = f"task_{int(start_time.timestamp())}"
         
         try:
-            # Create task record
-            async with get_db_session() as session:
-                task = Task(
-                    description=task_description,
-                    status=TaskStatus.PENDING,
-                    max_agents=max_agents,
-                    timeout_seconds=timeout,
-                    created_at=datetime.now(timezone.utc)
-                )
-                session.add(task)
-                await session.commit()
-                task_id = task.id
+            self.logger.info("Starting task orchestration", 
+                           task_id=task_id, 
+                           description=task_description)
             
+            # Add to active tasks
             self._active_tasks.add(task_id)
             
-            try:
-                # Plan the task
-                plan = await self.task_planner.create_plan(
-                    task_description=task_description,
-                    available_agents=await self._get_available_agents(agent_filter),
-                    max_agents=max_agents
+            # Get available agents
+            available_agents = await self._get_available_agents(agent_filter)
+            
+            if not available_agents:
+                raise OrchestrationException("No available agents found")
+            
+            # Limit agents
+            selected_agents = available_agents[:max_agents]
+            
+            # Plan the task
+            if self.task_planner:
+                task_plan = await self.task_planner.plan_task(
+                    description=task_description,
+                    available_agents=[agent.id for agent in selected_agents],
+                    constraints={"timeout": timeout}
                 )
+            else:
+                # Simple fallback plan
+                task_plan = {
+                    "steps": [{"agent_id": selected_agents[0].id, "action": task_description}],
+                    "estimated_duration": 60
+                }
+            
+            # Execute the task
+            execution_results = []
+            
+            for step in task_plan.get("steps", []):
+                agent_id = step.get("agent_id")
+                action = step.get("action", task_description)
                 
-                # Execute the workflow
-                execution_result = await self.workflow_engine.execute_workflow(
-                    plan=plan,
-                    timeout=timeout
-                )
-                
-                # Update task status
-                async with get_db_session() as session:
-                    task = await session.get(Task, task_id)
-                    task.status = TaskStatus.COMPLETED
-                    task.result_data = execution_result.result_data
-                    task.completed_at = datetime.now(timezone.utc)
-                    await session.commit()
-                
-                execution_time = asyncio.get_event_loop().time() - start_time
-                
-                result = OrchestrationResult(
-                    task_id=task_id,
-                    status=TaskStatus.COMPLETED,
-                    summary=execution_result.summary,
-                    agents_used=execution_result.agents_used,
-                    execution_time=execution_time,
-                    result_data=execution_result.result_data
-                )
-                
-                self.logger.info(
-                    "Task orchestration completed",
-                    task_id=task_id,
-                    duration=execution_time,
-                    agents_used=len(execution_result.agents_used)
-                )
-                
-                return result
-                
-            except Exception as e:
-                # Update task status to failed
-                async with get_db_session() as session:
-                    task = await session.get(Task, task_id)
-                    task.status = TaskStatus.FAILED
-                    task.error_message = str(e)
-                    task.completed_at = datetime.now(timezone.utc)
-                    await session.commit()
-                
-                raise TaskExecutionException(task_id, "execution", e)
-                
-            finally:
-                self._active_tasks.discard(task_id)
-                
+                if self.agent_pool:
+                    execution_id = await self.agent_pool.submit_task(
+                        agent_id=agent_id,
+                        task_id=task_id,
+                        task_data={"description": action, "parameters": step.get("parameters", {})},
+                        priority=1
+                    )
+                    
+                    # Wait for completion (simplified)
+                    await asyncio.sleep(2)  # Give some time for execution
+                    
+                    execution = await self.agent_pool.get_execution_status(execution_id)
+                    if execution:
+                        execution_results.append({
+                            "agent_id": agent_id,
+                            "status": execution.status.value,
+                            "result": execution.result,
+                            "error": execution.error
+                        })
+            
+            # Determine overall status
+            if all(r.get("status") == "completed" for r in execution_results):
+                overall_status = TaskStatus.COMPLETED
+            elif any(r.get("status") == "failed" for r in execution_results):
+                overall_status = TaskStatus.FAILED
+            else:
+                overall_status = TaskStatus.RUNNING
+            
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            
+            result = OrchestrationResult(
+                task_id=task_id,
+                status=overall_status,
+                summary=f"Task executed across {len(selected_agents)} agents",
+                agents_used=[agent.id for agent in selected_agents],
+                execution_time=execution_time,
+                result_data={
+                    "execution_results": execution_results,
+                    "task_plan": task_plan
+                }
+            )
+            
+            self.logger.info("Task orchestration completed", 
+                           task_id=task_id,
+                           status=overall_status.value,
+                           execution_time=execution_time)
+            
+            return result
+            
         except Exception as e:
-            self.logger.error("Task orchestration failed", error=str(e))
-            raise OrchestrationException(f"Task orchestration failed: {e}")
+            self.logger.error("Task orchestration failed", 
+                            task_id=task_id, 
+                            error=str(e))
+            
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            
+            return OrchestrationResult(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                summary=f"Task failed: {str(e)}",
+                agents_used=[],
+                execution_time=execution_time,
+                result_data={"error": str(e)}
+            )
+            
+        finally:
+            # Remove from active tasks
+            self._active_tasks.discard(task_id)
     
     async def _get_available_agents(self, agent_filter: Optional[List[str]] = None) -> List[Agent]:
-        """Get list of available agents, optionally filtered"""
-        async with get_db_session() as session:
-            agents = await self.agent_repo.list_by_status(session, AgentStatus.AVAILABLE)
-            
-            if agent_filter:
-                agents = [agent for agent in agents if agent.id in agent_filter]
-            
-            return agents
+        """Get list of available agents"""
+        try:
+            async with get_db_session() as session:
+                agent_repo = AgentRepository(session)
+                agents = await agent_repo.list_by_status(session, AgentStatus.READY)
+                
+                if agent_filter:
+                    agents = [agent for agent in agents if agent.name in agent_filter]
+                
+                return agents
+                
+        except Exception as e:
+            self.logger.error("Failed to get available agents", error=str(e))
+            return []
     
     async def get_system_status(self) -> SystemStatusInfo:
-        """Get comprehensive system status information"""
+        """Get comprehensive system status"""
         try:
-            # Count agents and tasks
-            async with get_db_session() as session:
-                agent_count = await self.agent_repo.count_by_status(session, AgentStatus.AVAILABLE)
-                
-            active_tasks = len(self._active_tasks)
+            # Get agent count
+            agent_count = 0
+            if self.agent_registry:
+                agent_count = self.agent_registry.active_agent_count
             
-            # Check component health
-            components_health = await self._check_components_health()
+            # Get component health
+            component_health = await self._check_components_health()
+            
+            # Check database status
+            db_status = "healthy"
+            try:
+                async with get_db_session() as session:
+                    await session.execute(text("SELECT 1"))
+            except Exception:
+                db_status = "error"
+            
+            # Check LLM status
+            llm_status = "healthy"
+            try:
+                if self.model_manager:
+                    model_health = await self.model_manager.health_check()
+                    llm_status = "healthy" if model_health.healthy else "error"
+            except Exception:
+                llm_status = "error"
             
             return SystemStatusInfo(
                 overall_status=self._status,
                 agent_count=agent_count,
-                active_tasks=active_tasks,
-                database_status=components_health.get("database", "unknown"),
-                llm_status=components_health.get("llm", "unknown"),
+                active_tasks=len(self._active_tasks),
+                database_status=db_status,
+                llm_status=llm_status,
                 last_check=datetime.now(timezone.utc),
-                components=components_health
+                components=component_health
             )
             
         except Exception as e:
             self.logger.error("Failed to get system status", error=str(e))
-            raise OrchestrationException(f"Status check failed: {e}")
+            return SystemStatusInfo(
+                overall_status=SystemStatus.ERROR,
+                agent_count=0,
+                active_tasks=0,
+                database_status="error",
+                llm_status="error",
+                last_check=datetime.now(timezone.utc),
+                components={"error": str(e)}
+            )
     
     async def shutdown(self) -> None:
-        """Gracefully shutdown the orchestrator"""
-        self.logger.info("Shutting down Mark-1 orchestrator...")
-        
+        """Shutdown the orchestrator and all components"""
         try:
-            # Signal shutdown to background tasks
+            self.logger.info("Shutting down Mark-1 orchestrator...")
+            self._status = SystemStatus.SHUTDOWN
+            
+            # Signal shutdown
             self._shutdown_event.set()
             
-            # Cancel health check task
+            # Cancel background tasks
             if self._health_check_task:
                 self._health_check_task.cancel()
                 try:
                     await self._health_check_task
+                except asyncio.CancelledError:
+                    pass
+            
+            if self._auto_discovery_task:
+                self._auto_discovery_task.cancel()
+                try:
+                    await self._auto_discovery_task
                 except asyncio.CancelledError:
                     pass
             
@@ -524,14 +656,10 @@ class Mark1Orchestrator:
             if self.workflow_engine:
                 await self.workflow_engine.shutdown()
             
-            if self.model_manager:
-                await self.model_manager.shutdown()
-            
-            self._status = SystemStatus.SHUTDOWN
-            self.logger.info("Mark-1 orchestrator shutdown complete")
+            self.logger.info("Mark-1 orchestrator shutdown completed")
             
         except Exception as e:
-            self.logger.error("Error during shutdown", error=str(e))
+            self.logger.error("Error during orchestrator shutdown", error=str(e))
             raise OrchestrationException(f"Shutdown failed: {e}")
     
     @property
@@ -541,5 +669,15 @@ class Mark1Orchestrator:
     
     @property
     def active_tasks_count(self) -> int:
-        """Get number of active tasks"""
+        """Get count of active tasks"""
         return len(self._active_tasks)
+    
+    @property
+    def is_healthy(self) -> bool:
+        """Check if system is healthy"""
+        return self._status == SystemStatus.HEALTHY
+    
+    @property
+    def is_initialized(self) -> bool:
+        """Check if orchestrator is initialized"""
+        return self._initialized

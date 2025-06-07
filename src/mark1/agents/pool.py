@@ -305,7 +305,7 @@ class AgentPool:
         try:
             async with get_db_session() as session:
                 agent_repo = AgentRepository(session)
-                agents = await agent_repo.list_by_status(session, AgentStatus.AVAILABLE)
+                agents = await agent_repo.list_by_status(session, AgentStatus.READY)
                 
                 for agent in agents:
                     await self._create_worker(agent.id)
@@ -459,7 +459,7 @@ class AgentPool:
             
         finally:
             # Update agent status back to available
-            await self._update_agent_status(agent_id, AgentStatus.AVAILABLE)
+            await self._update_agent_status(agent_id, AgentStatus.READY)
             
             # Remove from active executions
             self.active_executions.pop(execution_id, None)
@@ -526,8 +526,8 @@ class AgentPool:
                 agents = await agent_repo.list_all(session)
                 
                 for agent in agents:
-                    if agent.status == AgentStatus.AVAILABLE:
-                        available_count += 1
+                    if agent.status == AgentStatus.READY:
+                        self.stats.available_agents += 1
                     elif agent.status == AgentStatus.BUSY:
                         busy_count += 1
                     elif agent.status == AgentStatus.ERROR:
@@ -535,7 +535,6 @@ class AgentPool:
             
             # Update stats
             self.stats.total_agents = len(self.workers)
-            self.stats.available_agents = available_count
             self.stats.busy_agents = busy_count
             self.stats.failed_agents = failed_count
             

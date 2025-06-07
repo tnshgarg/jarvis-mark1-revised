@@ -255,3 +255,29 @@ class WorkflowEngine:
     def is_initialized(self) -> bool:
         """Check if the workflow engine is initialized"""
         return self._initialized
+    
+    async def shutdown(self) -> None:
+        """Shutdown the workflow engine"""
+        try:
+            self.logger.info("Shutting down workflow engine...")
+            
+            # Cancel all active workflow tasks
+            for workflow_id, task in self._workflow_tasks.items():
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    self.logger.info("Cancelled workflow", workflow_id=workflow_id)
+            
+            # Clear state
+            self._active_workflows.clear()
+            self._workflow_tasks.clear()
+            self._initialized = False
+            
+            self.logger.info("Workflow engine shutdown complete")
+            
+        except Exception as e:
+            self.logger.error("Error during workflow engine shutdown", error=str(e))
+            raise WorkflowException(f"Workflow engine shutdown failed: {e}")

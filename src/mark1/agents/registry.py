@@ -168,7 +168,7 @@ class AgentRegistry:
     def _agent_status_to_registration_status(self, agent_status: AgentStatus) -> RegistrationStatus:
         """Convert agent status to registration status"""
         mapping = {
-            AgentStatus.AVAILABLE: RegistrationStatus.ACTIVE,
+            AgentStatus.READY: RegistrationStatus.ACTIVE,
             AgentStatus.BUSY: RegistrationStatus.ACTIVE,
             AgentStatus.DISABLED: RegistrationStatus.DISABLED,
             AgentStatus.ERROR: RegistrationStatus.ERROR
@@ -213,13 +213,12 @@ class AgentRegistry:
                 
                 agent = Agent(
                     name=name,
-                    type=self._framework_to_type.get(framework.lower(), AgentType.CUSTOM),
-                    framework=framework,
+                    agent_type=self._framework_to_type.get(framework.lower(), AgentType.CUSTOM),
+                    framework_version=framework,
                     file_path=str(file_path) if file_path else None,
                     capabilities=capabilities or [],
                     extra_metadata=metadata or {},
-                    confidence=confidence,
-                    status=AgentStatus.AVAILABLE,
+                    status=AgentStatus.READY,
                     created_at=datetime.now(timezone.utc)
                 )
                 

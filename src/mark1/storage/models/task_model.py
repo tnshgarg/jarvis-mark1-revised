@@ -116,7 +116,7 @@ class Task(Base):
     
     # Relationships
     agent = relationship("Agent", back_populates="tasks")
-    context = relationship("Context", back_populates="tasks")
+    context = relationship("ContextModel", back_populates="tasks", foreign_keys=[context_id])
     executions = relationship("TaskExecution", back_populates="task", cascade="all, delete-orphan")
     
     # Self-referential relationships for dependencies

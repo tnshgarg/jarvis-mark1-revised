@@ -177,7 +177,6 @@ def setup_logging(settings: Optional[Settings] = None) -> None:
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
-        structlog.processors.add_logger_name,
         structlog.processors.TimeStamper(fmt="ISO", utc=True),
         AsyncLogProcessor(),
         AgentContextProcessor(),
@@ -246,11 +245,8 @@ def _get_logging_config(settings: Settings) -> Dict[str, Any]:
                 "format": "%(levelname)s | %(name)s | %(message)s"
             },
             "json": {
-                "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
-                "format": (
-                    "%(asctime)s %(name)s %(levelname)s %(filename)s "
-                    "%(lineno)d %(message)s"
-                )
+                "format": "%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S"
             }
         },
         "filters": {
@@ -265,9 +261,9 @@ def _get_logging_config(settings: Settings) -> Dict[str, Any]:
         },
         "handlers": {
             "console": {
-                "class": "rich.logging.RichHandler" if settings.is_development() else "logging.StreamHandler",
+                "class": "logging.StreamHandler",
                 "level": settings.log_level.value,
-                "formatter": "simple" if settings.is_development() else "json",
+                "formatter": "simple",
                 "filters": ["context_filter"],
                 "stream": sys.stdout
             },

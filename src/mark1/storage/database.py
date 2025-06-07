@@ -48,17 +48,34 @@ class DatabaseManager:
             # Get async URL
             database_url = self.settings.get_database_url(async_driver=True)
             
+            # Get connection arguments and engine parameters
+            connect_args = self._get_connect_args()
+            engine_kwargs = {}
+            
+            # Handle SQLite-specific parameters
+            if self.settings.database.url.startswith('sqlite'):
+                engine_kwargs['poolclass'] = StaticPool
+                # Remove poolclass from connect_args if it exists
+                connect_args.pop('poolclass', None)
+            
             # Create async engine with optimized settings
-            self._engine = create_async_engine(
-                database_url,
-                echo=self.settings.database.echo,
-                pool_size=self.settings.database.pool_size,
-                max_overflow=self.settings.database.max_overflow,
-                pool_timeout=self.settings.database.pool_timeout,
-                pool_recycle=self.settings.database.pool_recycle,
-                pool_pre_ping=True,  # Verify connections before use
-                connect_args=self._get_connect_args()
-            )
+            engine_params = {
+                'echo': self.settings.database.echo,
+                'pool_pre_ping': True,  # Verify connections before use
+                'connect_args': connect_args,
+                **engine_kwargs
+            }
+            
+            # Add pool parameters only for non-SQLite databases
+            if not self.settings.database.url.startswith('sqlite'):
+                engine_params.update({
+                    'pool_size': self.settings.database.pool_size,
+                    'max_overflow': self.settings.database.max_overflow,
+                    'pool_timeout': self.settings.database.pool_timeout,
+                    'pool_recycle': self.settings.database.pool_recycle,
+                })
+            
+            self._engine = create_async_engine(database_url, **engine_params)
             
             # Create async session factory
             self._session_factory = async_sessionmaker(
@@ -88,7 +105,6 @@ class DatabaseManager:
         if self.settings.database.url.startswith('sqlite'):
             connect_args.update({
                 'check_same_thread': False,
-                'poolclass': StaticPool,
             })
         elif self.settings.database.url.startswith('postgresql'):
             connect_args.update({

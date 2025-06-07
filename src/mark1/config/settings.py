@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
+# Load .env file explicitly
+from dotenv import load_dotenv
+load_dotenv()
+
 try:
     from pydantic_settings import BaseSettings
 except ImportError:
@@ -63,6 +67,10 @@ class DatabaseConfig(BaseModel):
         """Validate database URL format"""
         try:
             parsed = urlparse(v)
+            # Handle SQLite URLs which can have different formats
+            if parsed.scheme == 'sqlite':
+                return v
+            # For other databases, require netloc
             if not parsed.scheme or not parsed.netloc:
                 raise ValueError("Invalid database URL format")
             return v
@@ -289,7 +297,9 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         env_nested_delimiter = "__"
+        env_prefix = "MARK1_"
         case_sensitive = False
+        extra = "allow"
         
     @model_validator(mode='before')
     @classmethod
@@ -360,8 +370,11 @@ class Settings(BaseSettings):
     def get_database_url(self, async_driver: bool = False) -> str:
         """Get database URL with optional async driver"""
         url = self.database.url
-        if async_driver and url.startswith("postgresql://"):
-            url = url.replace("postgresql://", "postgresql+asyncpg://")
+        if async_driver:
+            if url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://")
+            elif url.startswith("sqlite://"):
+                url = url.replace("sqlite://", "sqlite+aiosqlite://")
         return url
     
     def get_redis_url(self) -> str:
@@ -380,8 +393,8 @@ class Settings(BaseSettings):
         return f"<Settings(environment={self.environment}, debug={self.debug})>"
 
 
-# Global settings instance
-settings = Settings()
+# Global settings instance (lazy-loaded)
+_settings: Optional[Settings] = None
 
 
 def get_settings() -> Settings:
@@ -394,7 +407,10 @@ def get_settings() -> Settings:
     Returns:
         Settings: The global settings instance
     """
-    return settings
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
 
 
 def load_settings_from_file(file_path: Union[str, Path]) -> Settings:

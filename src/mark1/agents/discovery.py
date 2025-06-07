@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Type, Any, Set, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from ..utils.exceptions import DiscoveryError, AgentLoadError
 from ..utils.constants import AGENT_DISCOVERY_PATHS, AGENT_FILE_PATTERNS
@@ -395,6 +396,13 @@ class AgentDiscoveryEngine:
         ]
         logger.info(f"Initialized {len(self.strategies)} discovery strategies")
     
+    async def initialize(self):
+        """Initialize the discovery engine (async interface for orchestrator compatibility)."""
+        # Discovery engine is already initialized in __init__, but this provides
+        # an async interface for consistency with other components
+        logger.debug("Agent discovery engine initialized")
+        return True
+    
     def discover_all(self, search_paths: Optional[List[Path]] = None) -> Dict[str, AgentMetadata]:
         """Discover all agents using all available strategies."""
         if search_paths is None:
@@ -530,6 +538,86 @@ class AgentDiscoveryEngine:
                 stats["tags"][tag] = stats["tags"].get(tag, 0) + 1
         
         return stats
+    
+    async def scan_directory(
+        self,
+        directory: Path,
+        recursive: bool = True,
+        include_patterns: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Scan a directory for agents and return structured results
+        
+        Args:
+            directory: Directory to scan
+            recursive: Whether to scan recursively
+            include_patterns: Optional file patterns to include
+            
+        Returns:
+            Structured scan results for compatibility
+        """
+        try:
+            self.logger.info("Scanning directory for agents", directory=str(directory))
+            
+            # Discover agents in the directory
+            discovered_agents = self.discover_all([directory])
+            
+            # Convert to structured format expected by orchestrator
+            files_results = []
+            total_files = 0
+            
+            # Group agents by file
+            files_with_agents = {}
+            for agent_key, agent_metadata in discovered_agents.items():
+                file_path = agent_metadata.file_path
+                if file_path not in files_with_agents:
+                    files_with_agents[file_path] = []
+                    total_files += 1
+                
+                files_with_agents[file_path].append({
+                    "name": agent_metadata.name,
+                    "file_path": file_path,
+                    "framework": getattr(agent_metadata, 'framework', 'unknown'),
+                    "capabilities": agent_metadata.capabilities,
+                    "confidence": 0.8,  # Default confidence
+                    "metadata": {
+                        "module_path": agent_metadata.module_path,
+                        "class_name": agent_metadata.class_name,
+                        "description": agent_metadata.description,
+                        "version": agent_metadata.version,
+                        "author": agent_metadata.author
+                    }
+                })
+            
+            # Create files results
+            for file_path, agents in files_with_agents.items():
+                files_results.append({
+                    "file_path": file_path,
+                    "agents": agents,
+                    "file_type": Path(file_path).suffix.lower(),
+                })
+            
+            result = {
+                "directory": str(directory),
+                "total_files": total_files,
+                "files": files_results,
+                "summary": {
+                    "agents_found": len(discovered_agents),
+                    "files_with_agents": len(files_with_agents),
+                    "scan_time": datetime.now().isoformat()
+                }
+            }
+            
+            self.logger.info("Directory scan completed", 
+                           directory=str(directory),
+                           agents_found=len(discovered_agents),
+                           files_scanned=total_files)
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error("Directory scan failed", directory=str(directory), error=str(e))
+            raise DiscoveryError(f"Directory scan failed: {e}")
 
 
 # Convenience functions
