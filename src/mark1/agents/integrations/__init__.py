@@ -52,51 +52,87 @@ from .crewai_integration import (
 )
 from .base_integration import BaseIntegration, IntegrationError
 
+# Custom Agent Integration Framework (Session 17)
+from .custom_integration import (
+    CustomAgentIntegration,
+    GenericAgentAdapter,
+    CustomAgentType,
+    IntegrationProtocol,
+    AdaptationStrategy,
+    CustomIntegrationConfig,
+    CustomAgentMetadata,
+    IntegrationTemplate,
+    CustomAgentSDK,
+    GenericAgentDetector,
+    DirectCallHandler,
+    HTTPRestHandler,
+    CLISubprocessHandler,
+    WebSocketHandler
+)
+
 __all__ = [
-    # Basic LangChain Integration
-    'LangChainIntegration',
-    'LangChainAgentAdapter',
+    # Base classes
+    "BaseIntegration",
+    "BaseAgentAdapter", 
+    "IntegrationType",
+    "AgentCapability",
+    "IntegratedAgent",
+    "IntegrationError",
+    
+    # LangChain Integration (Session 13)
+    "LangChainIntegration",
+    "LangChainAgentAdapter",
     
     # Advanced LangChain Integration (Session 14)
-    'AdvancedLangChainIntegration',
-    'AdvancedLangChainAgentAdapter',
-    'LangGraphWorkflow',
-    'LangGraphNode', 
-    'LangGraphEdge',
-    'LangGraphStateSchema',
-    'LangGraphStateManager',
-    'MultiAgentConfiguration',
-    'WorkflowComplexity',
-    'LangGraphNodeType',
+    "AdvancedLangChainIntegration",
+    "LangGraphAgentAdapter",
+    "ChainType",
+    "LangGraphNode",
+    "LangGraphWorkflow",
+    "LangChainToolRegistry",
+    "ChainOrchestrator",
+    "MultiAgentLangChainSystem",
     
     # AutoGPT Integration (Session 15)
-    'AutoGPTIntegration',
-    'AutoGPTAgentAdapter',
-    'AutonomyLevel',
-    'GoalType',
-    'AutonomousGoal',
-    'MemorySystem',
-    'AutoGPTAgentInfo',
-    'AutonomousGoalManager',
-    'MemoryManager',
-    'GoalDetector',
-    'MemorySystemAnalyzer',
+    "AutoGPTIntegration",
+    "AutoGPTAgentAdapter",
+    "AutonomyLevel",
+    "GoalType",
+    "AutonomousGoal",
+    "MemorySystem",
+    "AutoGPTAgentInfo",
+    "AutonomousGoalManager",
+    "MemoryManager",
+    "GoalDetector",
+    "MemorySystemAnalyzer",
     
     # CrewAI Integration (Session 16)
-    'CrewAIIntegration',
-    'CrewAIAgentAdapter',
-    'CrewRole',
-    'CollaborationPattern',
-    'TaskDelegationStrategy',
-    'CrewMember',
-    'CrewTask',
-    'CrewConfiguration',
-    'CrewAIAgentDetector',
-    'RoleBasedTaskDelegator',
-    'InterAgentCommunicator',
-    'CollaborativeWorkflowEngine',
+    "CrewAIIntegration",
+    "CrewAIAgentAdapter",
+    "CrewRole",
+    "CollaborationPattern",
+    "TaskDelegationStrategy",
+    "CrewMember",
+    "CrewTask",
+    "CrewConfiguration",
+    "CrewAIAgentDetector",
+    "RoleBasedTaskDelegator",
+    "InterAgentCommunicator",
+    "CollaborativeWorkflowEngine",
     
-    # Base Components
-    'BaseIntegration',
-    'IntegrationError'
+    # Custom Agent Integration Framework (Session 17)
+    "CustomAgentIntegration",
+    "GenericAgentAdapter",
+    "CustomAgentType",
+    "IntegrationProtocol",
+    "AdaptationStrategy",
+    "CustomIntegrationConfig",
+    "CustomAgentMetadata",
+    "IntegrationTemplate",
+    "CustomAgentSDK",
+    "GenericAgentDetector",
+    "DirectCallHandler",
+    "HTTPRestHandler",
+    "CLISubprocessHandler",
+    "WebSocketHandler"
 ]
