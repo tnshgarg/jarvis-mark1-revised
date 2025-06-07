@@ -17,9 +17,10 @@ if __name__ == "__main__":
 
     # Example task (can be modified)
     task = {
-        "input": "Build a collaborative editor",
-        "capability": "code_generation"
-    }
+    "input": "setup a python project with fastapi and redis",
+    "capability": "code_execution"
+}
+
 
     result = orchestrator.execute_task(task)
     print("Output:", result)

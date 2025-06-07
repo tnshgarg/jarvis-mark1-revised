@@ -1,13 +1,18 @@
+# memory/vector_store.py
 import chromadb
-from chromadb.config import Settings
+from memory.base import BaseMemory
 
-class VectorStore:
-    def __init__(self, persist_directory="data/vector_db"):
-        self.client = chromadb.Client(Settings(persist_directory=persist_directory))
-        self.collection = self.client.get_or_create_collection(name="agent_memory")
+class VectorStore(BaseMemory):
+    def __init__(self):
+        self.client = chromadb.Client()
+        self.collection = self.client.get_or_create_collection("long_term")
 
     def add_memory(self, task_id: str, content: str):
         self.collection.add(documents=[content], ids=[task_id])
 
-    def search(self, query: str):
-        return self.collection.query(query_texts=[query], n_results=3)
+    def search_memory(self, query: str, top_k: int = 3):
+        results = self.collection.query(query_texts=[query], n_results=top_k)
+        return results['documents'][0] if results else []
+
+    def clear_memory(self):
+        self.collection.delete()
