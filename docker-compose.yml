@@ -1,0 +1,366 @@
+version: "3.8"
+
+# Mark-1 AI Orchestrator - Production Docker Compose
+# Comprehensive production deployment with all services
+
+services:
+  # ================================================
+  # Mark-1 AI Orchestrator - Main Application
+  # ================================================
+  mark1-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VERSION: ${MARK1_VERSION:-1.0.0}
+        VCS_REF: ${GIT_COMMIT:-$(git rev-parse --short HEAD)}
+    image: mark1-orchestrator:${MARK1_VERSION:-latest}
+    container_name: mark1-orchestrator
+    restart: unless-stopped
+    ports:
+      - "${MARK1_PORT:-8000}:8000"
+      - "${MARK1_WS_PORT:-8001}:8001"
+    environment:
+      - MARK1_ENV=production
+      - MARK1_LOG_LEVEL=${MARK1_LOG_LEVEL:-INFO}
+      - MARK1_HOST=0.0.0.0
+      - MARK1_PORT=8000
+      - MARK1_WS_PORT=8001
+      - MARK1_WORKERS=${MARK1_WORKERS:-4}
+      - MARK1_MAX_MEMORY=${MARK1_MAX_MEMORY:-2048M}
+      - DATABASE_URL=postgresql://mark1:${POSTGRES_PASSWORD}@postgres:5432/mark1_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    volumes:
+      - mark1_logs:/app/logs
+      - mark1_data:/app/data
+      - mark1_models:/app/models
+      - mark1_configs:/app/configs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mark1-network
+    healthcheck:
+      test: ["CMD", "/app/docker-entrypoint.sh", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "${MARK1_CPU_LIMIT:-2.0}"
+          memory: ${MARK1_MEMORY_LIMIT:-4G}
+        reservations:
+          cpus: "${MARK1_CPU_RESERVATION:-1.0}"
+          memory: ${MARK1_MEMORY_RESERVATION:-2G}
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp:size=512M
+
+  # ================================================
+  # PostgreSQL Database
+  # ================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: mark1-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=mark1_db
+      - POSTGRES_USER=mark1
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - mark1-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mark1 -d mark1_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+
+  # ================================================
+  # Redis Cache & Message Broker
+  # ================================================
+  redis:
+    image: redis:7-alpine
+    container_name: mark1-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - mark1-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+
+  # ================================================
+  # NGINX Reverse Proxy & Load Balancer
+  # ================================================
+  nginx:
+    image: nginx:alpine
+    container_name: mark1-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - mark1-orchestrator
+    networks:
+      - mark1-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+
+  # ================================================
+  # Prometheus Monitoring
+  # ================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mark1-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - mark1-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    security_opt:
+      - no-new-privileges:true
+
+  # ================================================
+  # Grafana Dashboard
+  # ================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mark1-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - mark1-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+
+  # ================================================
+  # ELK Stack for Logging
+  # ================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: mark1-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - mark1-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    security_opt:
+      - no-new-privileges:true
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.0
+    container_name: mark1-logstash
+    restart: unless-stopped
+    volumes:
+      - ./logging/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - mark1_logs:/app/logs:ro
+    depends_on:
+      - elasticsearch
+    networks:
+      - mark1-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.0
+    container_name: mark1-kibana
+    restart: unless-stopped
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - mark1-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  # ================================================
+  # Backup Service
+  # ================================================
+  backup:
+    image: postgres:15-alpine
+    container_name: mark1-backup
+    restart: "no"
+    environment:
+      - POSTGRES_USER=mark1
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=mark1_db
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
+    volumes:
+      - backup_data:/backup
+      - ./scripts/backup.sh:/backup.sh:ro
+    depends_on:
+      - postgres
+    networks:
+      - mark1-network
+    command: ["sh", "-c", "while true; do sleep 86400; done"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+# ================================================
+# Networks
+# ================================================
+networks:
+  mark1-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ================================================
+# Volumes
+# ================================================
+volumes:
+  # Application volumes
+  mark1_logs:
+    driver: local
+  mark1_data:
+    driver: local
+  mark1_models:
+    driver: local
+  mark1_configs:
+    driver: local
+
+  # Database volumes
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+  # Monitoring volumes
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+  # Logging volumes
+  elasticsearch_data:
+    driver: local
+
+  # Web server volumes
+  nginx_logs:
+    driver: local
+
+  # Backup volumes
+  backup_data:
+    driver: local
