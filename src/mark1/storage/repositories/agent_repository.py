@@ -26,7 +26,15 @@ class AgentRepository(DatabaseRepository):
     """
     
     def __init__(self, db_manager=None):
-        super().__init__(db_manager)
+        # Initialize with the parent class first, pass db_manager
+        # to maintain compatibility with both simplified and original
+        # This will correctly handle both the original and simplified implementations
+        try:
+            super().__init__(db_manager)
+        except TypeError:
+            # If the parent init doesn't accept db_manager, try without it
+            super().__init__()
+        
         self.logger = structlog.get_logger(self.__class__.__name__)
     
     async def create_agent(
@@ -343,14 +351,23 @@ class AgentRepository(DatabaseRepository):
     async def get_agents_by_capability(
         self,
         session: AsyncSession,
-        capability: str
+        capability_name: str
     ) -> List[Agent]:
         """Get agents that have a specific capability"""
         try:
-            query = select(Agent).where(
-                and_(
-                    Agent.capabilities.op('?')(capability),
-                    Agent.status == AgentStatus.READY
+            from mark1.storage.models.agent_model import Agent, agent_capabilities
+            from mark1.storage.models.agent_model import Capability
+            
+            # Use the correct join syntax for the agent_capabilities association table
+            query = (
+                select(Agent)
+                .join(agent_capabilities)
+                .join(Capability)
+                .where(
+                    and_(
+                        Capability.name == capability_name,
+                        Agent.status == AgentStatus.READY
+                    )
                 )
             )
             
@@ -360,7 +377,7 @@ class AgentRepository(DatabaseRepository):
             return list(agents)
             
         except Exception as e:
-            self.logger.error("Failed to get agents by capability", capability=capability, error=str(e))
+            self.logger.error("Failed to get agents by capability", capability=capability_name, error=str(e))
             raise DatabaseError(f"Agent capability query failed: {e}")
     
     async def count_by_status(self, session: AsyncSession, status: AgentStatus) -> int:

@@ -34,6 +34,7 @@ from .commands import (
     AgentCommands, TaskCommands, WorkflowCommands, 
     ConfigCommands, SystemCommands, DevCommands
 )
+from .agent_manager import app as agent_manager_app
 from .utils import CLIFormatter, CLIValidator, CLIConfig
 from ..core.logging import setup_logging
 
@@ -77,11 +78,13 @@ class Mark1CLI:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
-  mark1 agent list                     # List all agents
-  mark1 task create --name "My Task"   # Create a new task
-  mark1 workflow run --id workflow-123 # Run a workflow
-  mark1 system status                  # Show system status
-  mark1 dev generate-agent TestAgent   # Generate agent template
+  mark1 agent list                         # List all agents
+  mark1 agent integrate <repo-url>         # Integrate AI agent repository
+  mark1 agent remove <agent-id>            # Remove integrated agent
+  mark1 task create --name "My Task"       # Create a new task
+  mark1 workflow run --id workflow-123     # Run a workflow
+  mark1 system status                      # Show system status
+  mark1 dev generate-agent TestAgent       # Generate agent template
   
 For more help on a specific command, use:
   mark1 <command> --help
@@ -198,6 +201,32 @@ For more help on a specific command, use:
         create_parser.add_argument('--type', required=True, help='Agent type')
         create_parser.add_argument('--capabilities', nargs='+', help='Agent capabilities')
         create_parser.add_argument('--config', help='Path to agent config file')
+        
+        # Universal Integration Commands
+        integrate_parser = agent_subparsers.add_parser('integrate', help='Integrate AI agent repository')
+        integrate_parser.add_argument('repo_url', help='Git repository URL to integrate')
+        integrate_parser.add_argument('--name', '-n', help='Custom name for the agent')
+        integrate_parser.add_argument('--test/--no-test', dest='auto_test', default=True, help='Run tests after integration')
+        integrate_parser.add_argument('--force', '-f', action='store_true', help='Force integration even if agent exists')
+        
+        # Remove integrated agent
+        remove_parser = agent_subparsers.add_parser('remove', help='Remove integrated agent')
+        remove_parser.add_argument('agent_id', help='Agent ID to remove')
+        remove_parser.add_argument('--force', '-f', action='store_true', help='Force removal without confirmation')
+        
+        # Test agents
+        test_parser = agent_subparsers.add_parser('test', help='Test integrated agents')
+        test_parser.add_argument('agent_id', nargs='?', help='Specific agent ID to test (optional)')
+        test_parser.add_argument('--prompt', '-p', default='Hello, can you help me?', help='Test prompt')
+        test_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+        
+        # Analyze repository
+        analyze_parser = agent_subparsers.add_parser('analyze', help='Analyze repository without integrating')
+        analyze_parser.add_argument('repo_url', help='Repository URL to analyze')
+        analyze_parser.add_argument('--output', '-o', help='Save analysis to file')
+        
+        # Integration status
+        status_parser = agent_subparsers.add_parser('status', help='Show agent integration status')
         
         # Delete agent
         delete_parser = agent_subparsers.add_parser('delete', help='Delete agent')

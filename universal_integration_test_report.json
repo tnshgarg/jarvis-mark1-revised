@@ -1,0 +1,55 @@
+{
+  "test_summary": {
+    "total_tests": 5,
+    "successful_tests": 3,
+    "failed_tests": 2,
+    "success_rate": 60.0
+  },
+  "frameworks_tested": [],
+  "performance_metrics": {
+    "average_analysis_time": 21.82132824261983,
+    "average_integration_time": 0
+  },
+  "detailed_results": [
+    {
+      "repository": "CrewAI",
+      "status": "success",
+      "analysis_time": 10.609591960906982,
+      "framework_detected": "crewai",
+      "capabilities_count": 10,
+      "dependencies_count": 25,
+      "entry_points": 8,
+      "api_endpoints": 0
+    },
+    {
+      "repository": "AutoGPT",
+      "status": "success",
+      "analysis_time": 23.815495014190674,
+      "framework_detected": "crewai",
+      "capabilities_count": 10,
+      "dependencies_count": 0,
+      "entry_points": 42,
+      "api_endpoints": 2
+    },
+    {
+      "repository": "LangChain",
+      "status": "success",
+      "analysis_time": 31.03889775276184,
+      "framework_detected": "crewai",
+      "capabilities_count": 10,
+      "dependencies_count": 0,
+      "entry_points": 59,
+      "api_endpoints": 4
+    },
+    {
+      "repository": "CrewAI",
+      "status": "failed",
+      "error": "Expecting value: line 23 column 20 (char 529)"
+    },
+    {
+      "repository": "CrewAI",
+      "status": "failed",
+      "error": "Expecting value: line 23 column 20 (char 529)"
+    }
+  ]
+}

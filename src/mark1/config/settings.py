@@ -118,7 +118,7 @@ class ChromaDBConfig(BaseModel):
 class OllamaConfig(BaseModel):
     """Ollama LLM provider configuration"""
     
-    base_url: str = Field(default="http://localhost:11434", description="Ollama base URL")
+    base_url: str = Field(default="https://cdca-103-167-213-208.ngrok-free.app", description="Ollama base URL")
     default_model: str = Field(default="llama2", description="Default model name")
     timeout: float = Field(default=300.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")

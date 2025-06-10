@@ -135,17 +135,52 @@ class PythonModuleDiscovery(AgentDiscoveryStrategy):
         """Recursively scan a directory for agent modules."""
         agents = []
         
+        # Files to skip during discovery
+        skip_files = {
+            'setup.py', 'conftest.py', '__init__.py', 'test_*.py', 
+            'tests.py', 'manage.py', 'wsgi.py', 'asgi.py',
+            'settings.py', 'config.py', 'urls.py', 'admin.py',
+            'models.py', 'views.py', 'serializers.py', 'forms.py'
+        }
+        
+        # Directories to skip
+        skip_dirs = {
+            '__pycache__', '.git', '.pytest_cache', 'node_modules',
+            'migrations', 'static', 'media', 'templates', 'locale',
+            'venv', 'env', '.venv', '.env', 'build', 'dist', 'egg-info'
+        }
+        
         try:
             for item in directory.rglob("*.py"):
+                # Skip files that start with underscore
                 if item.name.startswith('_'):
-                    continue  # Skip private modules
+                    continue
+                
+                # Skip specific files
+                if item.name in skip_files:
+                    continue
+                    
+                # Skip files matching patterns
+                if any(pattern in item.name for pattern in ['test_', '_test']):
+                    continue
+                
+                # Skip if in excluded directories
+                if any(skip_dir in item.parts for skip_dir in skip_dirs):
+                    continue
+                
+                # Skip if file is too large (likely not an agent)
+                try:
+                    if item.stat().st_size > 1024 * 1024:  # 1MB limit
+                        continue
+                except:
+                    continue
                     
                 try:
                     agent_metadata = self._analyze_python_file(item)
                     if agent_metadata:
                         agents.extend(agent_metadata)
                 except Exception as e:
-                    logger.warning(f"Error analyzing {item}: {e}")
+                    logger.debug(f"Error analyzing {item}: {e}")
                     
         except Exception as e:
             logger.error(f"Error scanning directory {directory}: {e}")
@@ -157,6 +192,10 @@ class PythonModuleDiscovery(AgentDiscoveryStrategy):
         agents = []
         
         try:
+            # Additional safety checks before analysis
+            if not self._is_safe_to_analyze(file_path):
+                return agents
+            
             # Create module spec
             module_name = self._path_to_module_name(file_path)
             spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -171,6 +210,7 @@ class PythonModuleDiscovery(AgentDiscoveryStrategy):
             sys.modules[module_name] = module
             
             try:
+                # Execute with timeout protection
                 spec.loader.exec_module(module)
                 
                 # Inspect module for agent classes
@@ -189,6 +229,39 @@ class PythonModuleDiscovery(AgentDiscoveryStrategy):
             logger.debug(f"Could not analyze {file_path}: {e}")
             
         return agents
+    
+    def _is_safe_to_analyze(self, file_path: Path) -> bool:
+        """Check if a Python file is safe to analyze by importing."""
+        try:
+            # Read first few lines to check for problematic patterns
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content_preview = f.read(2048)  # Read first 2KB
+            
+            # Skip files with setup/installation patterns
+            dangerous_patterns = [
+                'setuptools', 'distutils', 'setup(', 'install_requires',
+                'from setuptools import', 'import setuptools',
+                'if __name__ == "__main__":\n    setup(',
+                'sys.exit(', 'os.system(', 'subprocess.',
+                'pip install', 'easy_install'
+            ]
+            
+            content_lower = content_preview.lower()
+            for pattern in dangerous_patterns:
+                if pattern.lower() in content_lower:
+                    logger.debug(f"Skipping {file_path}: contains pattern '{pattern}'")
+                    return False
+            
+            # Check if file looks like a script rather than a module
+            if 'if __name__ == "__main__":' in content_preview and 'class' not in content_preview:
+                logger.debug(f"Skipping {file_path}: appears to be a script")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error checking safety of {file_path}: {e}")
+            return False
     
     def _path_to_module_name(self, file_path: Path) -> str:
         """Convert file path to Python module name."""

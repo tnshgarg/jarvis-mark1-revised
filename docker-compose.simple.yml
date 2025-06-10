@@ -1,0 +1,125 @@
+version: "3.8"
+
+# Mark-1 AI Orchestrator - Simplified Production Stack
+# Essential services only, working Docker images
+
+services:
+  # ================================================
+  # Mark-1 AI Orchestrator - Main Application
+  # ================================================
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=mark1user
+      - POSTGRES_PASSWORD=mark1password
+      - POSTGRES_DB=mark1db
+      - WEATHER_API_KEY=demo_key
+    volumes:
+      - ./test_agents:/app/test_agents
+      - ./test_data:/app/test_data
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - mark1_network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ================================================
+  # PostgreSQL Database
+  # ================================================
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      - POSTGRES_USER=mark1user
+      - POSTGRES_PASSWORD=mark1password
+      - POSTGRES_DB=mark1db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mark1_network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mark1user -d mark1db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ================================================
+  # Redis Cache & Message Broker
+  # ================================================
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - mark1_network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ================================================
+  # Prometheus Monitoring (Simplified)
+  # ================================================
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - mark1_network
+    restart: on-failure
+    container_name: mark1-prometheus
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=mark1admin
+    networks:
+      - mark1_network
+    restart: on-failure
+    container_name: mark1-grafana
+    depends_on:
+      - prometheus
+
+# ================================================
+# Volumes
+# ================================================
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+
+networks:
+  mark1_network:
+    driver: bridge
