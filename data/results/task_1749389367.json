@@ -1,0 +1,12 @@
+{
+  "task_id": "task_1749389367",
+  "workflow_steps": 3,
+  "agents_used": [
+    "Autogpt Agent",
+    "Langchain Agent",
+    "Babyagi Agent"
+  ],
+  "execution_time": 15,
+  "result": "Processed the task using standard methods for Babyagi Agent.",
+  "context_path": "data/contexts/task_1749389367.json"
+}

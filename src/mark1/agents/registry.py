@@ -111,18 +111,18 @@ class AgentRegistry:
         """Load existing agents from database"""
         try:
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 agents = await agent_repo.list_all(session)
                 
                 for agent in agents:
                     registration_info = AgentRegistrationInfo(
                         agent_id=agent.id,
                         name=agent.name,
-                        framework=agent.framework,
+                        framework=agent.framework_version or "unknown",
                         file_path=Path(agent.file_path) if agent.file_path else None,
                         capabilities=agent.capabilities or [],
                         metadata=agent.extra_metadata or {},
-                        confidence=agent.confidence or 0.0,
+                        confidence=1.0,  # Default confidence since field doesn't exist in Agent model
                         registration_time=agent.created_at,
                         status=self._agent_status_to_registration_status(agent.status)
                     )
@@ -138,7 +138,7 @@ class AgentRegistry:
         try:
             # Load metrics from database for existing agents
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 
                 for agent_id in self._registered_agents.keys():
                     metrics = await agent_repo.get_agent_metrics(session, agent_id)
@@ -209,7 +209,7 @@ class AgentRegistry:
             
             # Create agent record
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 
                 agent = Agent(
                     name=name,
@@ -274,6 +274,42 @@ class AgentRegistry:
         Returns:
             Agent ID
         """
+        # Check if agent already exists by file_path to avoid unique constraint violation
+        file_path = scan_data.get("file_path")
+        if file_path:
+            try:
+                async with get_db_session() as session:
+                    agent_repo = AgentRepository()
+                    # Search for existing agent with same file_path
+                    agents = await agent_repo.list_all(session)
+                    
+                    for existing_agent in agents:
+                        if existing_agent.file_path == file_path:
+                            self.logger.debug("Agent with file_path already exists", 
+                                            file_path=file_path, 
+                                            existing_agent_id=existing_agent.id)
+                            
+                            # Update registry if not already present
+                            if existing_agent.id not in self._registered_agents:
+                                registration_info = AgentRegistrationInfo(
+                                    agent_id=existing_agent.id,
+                                    name=existing_agent.name,
+                                    framework=existing_agent.framework_version or "unknown",
+                                    file_path=Path(existing_agent.file_path) if existing_agent.file_path else None,
+                                    capabilities=existing_agent.capabilities or [],
+                                    metadata=existing_agent.extra_metadata or {},
+                                    confidence=scan_data.get("confidence", 0.0),
+                                    registration_time=existing_agent.created_at,
+                                    status=self._agent_status_to_registration_status(existing_agent.status)
+                                )
+                                self._registered_agents[existing_agent.id] = registration_info
+                            
+                            return existing_agent.id
+                            
+            except Exception as e:
+                self.logger.warning("Error checking for existing agent", file_path=file_path, error=str(e))
+        
+        # Proceed with normal registration if no duplicate found
         return await self.register_agent(
             name=scan_data["name"],
             framework=scan_data["framework"],
@@ -303,10 +339,12 @@ class AgentRegistry:
                 if not isinstance(capability, str):
                     errors.append(f"Invalid capability type: {type(capability)}")
         
-        # Check for duplicate names
+        # Check for duplicate names - just warn, don't fail
         for existing_info in self._registered_agents.values():
             if existing_info.name == name and existing_info.status == RegistrationStatus.ACTIVE:
-                errors.append(f"Agent with name '{name}' already registered")
+                self.logger.warning("Agent with similar name already exists", 
+                                  existing_name=existing_info.name, 
+                                  new_name=name)
                 break
         
         if errors:
@@ -332,7 +370,7 @@ class AgentRegistry:
             
             # Update database
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 agent = await agent_repo.get_by_id(session, Agent, agent_id)
                 
                 if agent:
@@ -478,7 +516,7 @@ class AgentRegistry:
         # Persist to database
         try:
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 await agent_repo.update_agent_metrics(session, agent_id, {
                     "total_executions": metrics.total_executions,
                     "successful_executions": metrics.successful_executions,

@@ -432,7 +432,8 @@ class Mark1Orchestrator:
         task_description: str,
         agent_filter: Optional[List[str]] = None,
         max_agents: int = 3,
-        timeout: int = 300
+        timeout: int = 300,
+        context: Optional[Dict[str, Any]] = None
     ) -> OrchestrationResult:
         """
         Orchestrate a task across available agents
@@ -442,6 +443,7 @@ class Mark1Orchestrator:
             agent_filter: Optional list of agent names to filter by
             max_agents: Maximum number of agents to use
             timeout: Task timeout in seconds
+            context: Additional context for task execution
             
         Returns:
             Orchestration result
@@ -466,76 +468,96 @@ class Mark1Orchestrator:
             if not available_agents:
                 raise OrchestrationException("No available agents found")
             
-            # Limit agents
-            selected_agents = available_agents[:max_agents]
+            # Decompose task into subtasks for different agents
+            subtasks = self._decompose_complex_task(task_description, available_agents, context or {})
             
-            # Plan the task
-            if self.task_planner:
-                task_plan = await self.task_planner.plan_task(
-                    description=task_description,
-                    available_agents=[agent.id for agent in selected_agents],
-                    constraints={"timeout": timeout}
-                )
-            else:
-                # Simple fallback plan
-                task_plan = {
-                    "steps": [{"agent_id": selected_agents[0].id, "action": task_description}],
-                    "estimated_duration": 60
-                }
+            # Limit agents based on subtasks
+            selected_agents = available_agents[:min(max_agents, len(subtasks))]
             
-            # Execute the task
+            self.logger.info(f"Task decomposed into {len(subtasks)} subtasks for {len(selected_agents)} agents")
+            
+            # Execute subtasks in parallel
             execution_results = []
+            execution_tasks = []
             
-            for step in task_plan.get("steps", []):
-                agent_id = step.get("agent_id")
-                action = step.get("action", task_description)
-                
+            for i, (subtask, agent) in enumerate(zip(subtasks, selected_agents)):
                 if self.agent_pool:
-                    execution_id = await self.agent_pool.submit_task(
-                        agent_id=agent_id,
-                        task_id=task_id,
-                        task_data={"description": action, "parameters": step.get("parameters", {})},
-                        priority=1
+                    # Prepare task data with context
+                    task_data = {
+                        "description": subtask["description"],
+                        "parameters": {
+                            **subtask.get("parameters", {}),
+                            **(context or {}),
+                            "subtask_index": i,
+                            "total_subtasks": len(subtasks),
+                            "agent_role": subtask.get("role", "worker")
+                        }
+                    }
+                    
+                    execution_task = asyncio.create_task(
+                        self._execute_agent_subtask(agent.id, task_id, task_data, timeout)
                     )
-                    
-                    # Wait for completion (simplified)
-                    await asyncio.sleep(2)  # Give some time for execution
-                    
-                    execution = await self.agent_pool.get_execution_status(execution_id)
-                    if execution:
-                        execution_results.append({
-                            "agent_id": agent_id,
-                            "status": execution.status.value,
-                            "result": execution.result,
-                            "error": execution.error
-                        })
+                    execution_tasks.append(execution_task)
+            
+            # Wait for all subtasks to complete
+            if execution_tasks:
+                execution_results = await asyncio.gather(*execution_tasks, return_exceptions=True)
+            
+            # Process results and determine overall status
+            successful_results = []
+            failed_results = []
+            
+            for result in execution_results:
+                if isinstance(result, Exception):
+                    failed_results.append({"error": str(result)})
+                else:
+                    if result and result.get("status") == "completed":
+                        successful_results.append(result)
+                    else:
+                        failed_results.append(result)
             
             # Determine overall status
-            if all(r.get("status") == "completed" for r in execution_results):
+            if successful_results and not failed_results:
                 overall_status = TaskStatus.COMPLETED
-            elif any(r.get("status") == "failed" for r in execution_results):
-                overall_status = TaskStatus.FAILED
+                summary = f"Task completed successfully with {len(successful_results)} agents"
+            elif successful_results and failed_results:
+                overall_status = TaskStatus.COMPLETED
+                summary = f"Task partially completed: {len(successful_results)} succeeded, {len(failed_results)} failed"
             else:
-                overall_status = TaskStatus.RUNNING
+                overall_status = TaskStatus.FAILED
+                summary = f"Task failed: all {len(failed_results)} subtasks failed"
             
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            
+            # Aggregate results for final output
+            aggregated_result = self._aggregate_results(
+                task_description, 
+                successful_results, 
+                failed_results, 
+                context or {}
+            )
             
             result = OrchestrationResult(
                 task_id=task_id,
                 status=overall_status,
-                summary=f"Task executed across {len(selected_agents)} agents",
-                agents_used=[agent.id for agent in selected_agents],
+                summary=summary,
+                agents_used=[str(agent.id) for agent in selected_agents],
                 execution_time=execution_time,
                 result_data={
-                    "execution_results": execution_results,
-                    "task_plan": task_plan
+                    "subtasks": subtasks,
+                    "execution_results": successful_results,
+                    "failed_results": failed_results,
+                    "aggregated_result": aggregated_result,
+                    "output_files": aggregated_result.get("files_generated", [])
                 }
             )
             
             self.logger.info("Task orchestration completed", 
                            task_id=task_id,
                            status=overall_status.value,
-                           execution_time=execution_time)
+                           execution_time=execution_time,
+                           successful_subtasks=len(successful_results),
+                           failed_subtasks=len(failed_results))
             
             return result
             
@@ -559,11 +581,212 @@ class Mark1Orchestrator:
             # Remove from active tasks
             self._active_tasks.discard(task_id)
     
+    def _decompose_complex_task(
+        self, 
+        task_description: str, 
+        available_agents: List[Agent], 
+        context: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Decompose a complex task into subtasks for different agents"""
+        
+        task_lower = task_description.lower()
+        
+        if "website" in task_lower or "landing page" in task_lower:
+            return self._decompose_website_task(task_description, context)
+        elif "analysis" in task_lower or "analyze" in task_lower:
+            return self._decompose_analysis_task(task_description, context)
+        elif "code" in task_lower and "generate" in task_lower:
+            return self._decompose_coding_task(task_description, context)
+        else:
+            return self._decompose_generic_task(task_description, context)
+    
+    def _decompose_website_task(self, task_description: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Decompose website development task"""
+        return [
+            {
+                "description": f"Plan and design the structure for: {task_description}",
+                "role": "planner",
+                "parameters": {"task_type": "planning", "output_format": "design_doc"}
+            },
+            {
+                "description": f"Generate HTML structure and content for: {task_description}",
+                "role": "developer",
+                "parameters": {"task_type": "html_generation", "output_format": "html_file"}
+            },
+            {
+                "description": f"Create CSS styling and responsive design for: {task_description}",
+                "role": "designer", 
+                "parameters": {"task_type": "css_generation", "output_format": "css_file"}
+            }
+        ]
+    
+    def _decompose_analysis_task(self, task_description: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Decompose analysis task"""
+        return [
+            {
+                "description": f"Gather and collect data for: {task_description}",
+                "role": "researcher",
+                "parameters": {"task_type": "data_collection", "output_format": "dataset"}
+            },
+            {
+                "description": f"Analyze and process data for: {task_description}",
+                "role": "analyst",
+                "parameters": {"task_type": "data_analysis", "output_format": "analysis_report"}
+            }
+        ]
+    
+    def _decompose_coding_task(self, task_description: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Decompose coding task"""
+        return [
+            {
+                "description": f"Design architecture and plan implementation for: {task_description}",
+                "role": "architect", 
+                "parameters": {"task_type": "architecture_design", "output_format": "design_doc"}
+            },
+            {
+                "description": f"Generate code implementation for: {task_description}",
+                "role": "developer",
+                "parameters": {"task_type": "code_generation", "output_format": "source_code"}
+            }
+        ]
+    
+    def _decompose_generic_task(self, task_description: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Decompose generic task"""
+        return [
+            {
+                "description": f"Analyze and understand requirements for: {task_description}",
+                "role": "analyst",
+                "parameters": {"task_type": "requirement_analysis", "output_format": "requirements_doc"}
+            },
+            {
+                "description": f"Execute and implement solution for: {task_description}",
+                "role": "executor",
+                "parameters": {"task_type": "implementation", "output_format": "solution"}
+            }
+        ]
+    
+    async def _execute_agent_subtask(
+        self, 
+        agent_id: str, 
+        task_id: str, 
+        task_data: Dict[str, Any], 
+        timeout: int
+    ) -> Dict[str, Any]:
+        """Execute a subtask with a specific agent"""
+        try:
+            if self.agent_pool:
+                execution_id = await self.agent_pool.submit_task(
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    task_data=task_data,
+                    priority=1
+                )
+                
+                # Wait for completion with timeout
+                max_wait_time = min(timeout, 120)  # Max 2 minutes per subtask
+                wait_start = datetime.now(timezone.utc)
+                
+                while (datetime.now(timezone.utc) - wait_start).total_seconds() < max_wait_time:
+                    execution = await self.agent_pool.get_execution_status(execution_id)
+                    if execution and execution.status in [
+                        execution.status.COMPLETED, 
+                        execution.status.FAILED, 
+                        execution.status.TIMEOUT,
+                        execution.status.CANCELLED
+                    ]:
+                        return {
+                            "agent_id": agent_id,
+                            "execution_id": execution_id,
+                            "status": "completed" if execution.status.value == "completed" else "failed",
+                            "result": execution.result,
+                            "error": execution.error,
+                            "execution_time": (
+                                execution.end_time - execution.start_time
+                            ).total_seconds() if execution.end_time else 0
+                        }
+                    await asyncio.sleep(2)  # Check every 2 seconds
+                
+                # Timeout occurred
+                return {
+                    "agent_id": agent_id,
+                    "execution_id": execution_id,
+                    "status": "timeout",
+                    "error": f"Subtask timeout after {max_wait_time}s"
+                }
+            else:
+                raise Exception("Agent pool not available")
+                
+        except Exception as e:
+            return {
+                "agent_id": agent_id,
+                "status": "failed",
+                "error": str(e)
+            }
+    
+    def _aggregate_results(
+        self, 
+        original_task: str, 
+        successful_results: List[Dict[str, Any]], 
+        failed_results: List[Dict[str, Any]], 
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Aggregate results from multiple agents"""
+        
+        aggregated = {
+            "original_task": original_task,
+            "total_agents": len(successful_results) + len(failed_results),
+            "successful_agents": len(successful_results),
+            "failed_agents": len(failed_results),
+            "files_generated": [],
+            "combined_output": "",
+            "summary": ""
+        }
+        
+        # Combine outputs from all successful agents
+        combined_outputs = []
+        files_generated = []
+        
+        for result in successful_results:
+            if result.get("result") and isinstance(result["result"], dict):
+                result_data = result["result"].get("result_data", "")
+                combined_outputs.append(f"Agent {result.get('agent_id', 'unknown')}:\n{result_data}")
+                
+                # Check for file generation information
+                if "generated successfully" in str(result_data):
+                    files_generated.append(f"Files from Agent {result.get('agent_id', 'unknown')}")
+        
+        aggregated["combined_output"] = "\n\n" + "="*50 + "\n\n".join(combined_outputs)
+        aggregated["files_generated"] = files_generated
+        
+        # Generate summary
+        if successful_results:
+            aggregated["summary"] = f"""
+🎉 MULTI-AGENT TASK COMPLETION
+=============================
+
+✅ Original Task: {original_task}
+
+📊 Execution Summary:
+• Total Agents Used: {aggregated['total_agents']}
+• Successful Executions: {aggregated['successful_agents']}
+• Failed Executions: {aggregated['failed_agents']}
+• Files Generated: {len(files_generated)}
+
+🎯 Results:
+{aggregated['combined_output']}
+
+✨ Task completed through collaborative multi-agent orchestration!
+"""
+        else:
+            aggregated["summary"] = f"❌ Task failed - no agents completed their subtasks successfully"
+        
+        return aggregated
+    
     async def _get_available_agents(self, agent_filter: Optional[List[str]] = None) -> List[Agent]:
         """Get list of available agents"""
         try:
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 agents = await agent_repo.list_by_status(session, AgentStatus.READY)
                 
                 if agent_filter:
@@ -681,3 +904,19 @@ class Mark1Orchestrator:
     def is_initialized(self) -> bool:
         """Check if orchestrator is initialized"""
         return self._initialized
+
+    async def _update_agent_status(self, agent_id: str, status: AgentStatus) -> None:
+        """Update agent status in database"""
+        try:
+            async with get_db_session() as session:
+                agent_repo = AgentRepository()
+                agent = await agent_repo.get_by_id(session, Agent, agent_id)
+                
+                if agent:
+                    agent.status = status
+                    agent.last_activity = datetime.now(timezone.utc)
+                    await agent_repo.update(session, agent)
+                    await session.commit()
+                    
+        except Exception as e:
+            self.logger.error("Failed to update agent status", agent_id=agent_id, error=str(e))

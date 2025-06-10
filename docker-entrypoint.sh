@@ -116,44 +116,47 @@ initialize_logging() {
 initialize_database() {
     log_info "Initializing database connections..."
     
+    # Skip database initialization for simple demo
+    log_info "Skipping database initialization for simple demo"
+    
     # Wait for database if connection string is provided
-    if [ ! -z "$DATABASE_URL" ]; then
-        log_info "Waiting for database connection..."
-        max_attempts=30
-        attempt=1
-        
-        while [ $attempt -le $max_attempts ]; do
-            if python3 -c "
-import sys
-import asyncio
-from mark1.core.database import check_database_connection
-
-async def main():
-    try:
-        await check_database_connection()
-        print('Database connection successful')
-        sys.exit(0)
-    except Exception as e:
-        print(f'Database connection failed: {e}')
-        sys.exit(1)
-
-if __name__ == '__main__':
-    asyncio.run(main())
-" 2>/dev/null; then
-                log_info "Database connection established"
-                break
-            fi
-            
-            log_warn "Database connection attempt $attempt/$max_attempts failed"
-            sleep 2
-            attempt=$((attempt + 1))
-        done
-        
-        if [ $attempt -gt $max_attempts ]; then
-            log_error "Failed to establish database connection after $max_attempts attempts"
-            exit 1
-        fi
-    fi
+    # if [ ! -z "$DATABASE_URL" ]; then
+    #     log_info "Waiting for database connection..."
+    #     max_attempts=30
+    #     attempt=1
+    #     
+    #     while [ $attempt -le $max_attempts ]; do
+    #         if python3 -c "
+    # import sys
+    # import asyncio
+    # from mark1.core.database import check_database_connection
+    # 
+    # async def main():
+    #     try:
+    #         await check_database_connection()
+    #         print('Database connection successful')
+    #         sys.exit(0)
+    #     except Exception as e:
+    #         print(f'Database connection failed: {e}')
+    #         sys.exit(1)
+    # 
+    # if __name__ == '__main__':
+    #     asyncio.run(main())
+    # " 2>/dev/null; then
+    #             log_info "Database connection established"
+    #             break
+    #         fi
+    #         
+    #         log_warn "Database connection attempt $attempt/$max_attempts failed"
+    #         sleep 2
+    #         attempt=$((attempt + 1))
+    #     done
+    #     
+    #     if [ $attempt -gt $max_attempts ]; then
+    #         log_error "Failed to establish database connection after $max_attempts attempts"
+    #         exit 1
+    #     fi
+    # fi
     
     log_info "Database initialization completed"
 }
@@ -265,8 +268,8 @@ main_init() {
 start_application() {
     log_info "Starting Mark-1 AI Orchestrator..."
     
-    # Start the application with proper logging
-    exec python3 -m mark1.main "$@" 2>&1 | tee -a "$MARK1_LOG_FILE" &
+    # Start the AI orchestrator with CrewAI integration
+    exec python3 ai_orchestrator.py 2>&1 | tee -a "$MARK1_LOG_FILE" &
     
     # Store the PID for graceful shutdown
     MARK1_PID=$!

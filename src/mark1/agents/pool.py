@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 import structlog
 from concurrent.futures import ThreadPoolExecutor
 import psutil
@@ -153,25 +154,319 @@ class AgentWorker:
     
     def _execute_task_sync(self, task_data: Dict[str, Any]) -> Any:
         """Synchronous task execution (runs in thread pool)"""
-        # This is where the actual agent execution would happen
-        # For now, we'll simulate task execution
-        import time
-        import random
+        # Get agent information from database
+        try:
+            import asyncio
+            from pathlib import Path
+            import subprocess
+            import json
+            import tempfile
+            import os
+            import sys
+            import importlib.util
+            
+            # Get the task description
+            task_description = task_data.get("description", "")
+            parameters = task_data.get("parameters", {})
+            
+            self.logger.info(f"Executing real agent task: {task_description}")
+            
+            # Check if we should use our real AI agents
+            if self._should_use_real_ai_agents(task_description):
+                return self._execute_real_ai_agents(task_description, parameters)
+            
+            # Get agent details from database (we need to do this synchronously)
+            loop = None
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Get agent info
+            agent_info = loop.run_until_complete(self._get_agent_info())
+            
+            if not agent_info:
+                # Try real AI agents as fallback
+                return self._execute_real_ai_agents(task_description, parameters)
+            
+            agent_file_path = agent_info.get("file_path")
+            agent_name = agent_info.get("name", "unknown")
+            
+            self.logger.info(f"Found agent: {agent_name} at {agent_file_path}")
+            
+            # Try to execute the real agent
+            result = self._execute_real_ai_agent(agent_file_path, task_description, parameters)
+            
+            return {
+                "status": "completed",
+                "agent_name": agent_name,
+                "agent_file": agent_file_path,
+                "task_description": task_description,
+                "result_data": result,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Agent execution failed: {str(e)}")
+            # Try real AI agents as final fallback
+            try:
+                return self._execute_real_ai_agents(task_description, parameters)
+            except:
+                # Return error result
+                return {
+                    "status": "failed",
+                    "error": f"All agent execution methods failed: {str(e)}",
+                    "agent_id": self.agent_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+    
+    def _should_use_real_ai_agents(self, task_description: str) -> bool:
+        """Check if we should use our real AI agents"""
+        # Always use real AI agents for complex tasks
+        ai_keywords = [
+            "business plan", "market analysis", "comprehensive", "strategy",
+            "financial projections", "risk assessment", "competitive analysis",
+            "executive summary", "create", "generate", "analyze"
+        ]
         
-        # Simulate some work
-        processing_time = random.uniform(1.0, 5.0)
-        time.sleep(processing_time)
+        return any(keyword in task_description.lower() for keyword in ai_keywords)
+    
+    def _execute_real_ai_agents(self, task_description: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute using our real AI agents directly"""
+        try:
+            import sys
+            import os
+            from pathlib import Path
+            
+            # Import our real AI agents
+            sys.path.append("test_agents/working_ai")
+            
+            # Determine which agent to use based on task
+            if any(keyword in task_description.lower() for keyword in ["business plan", "comprehensive", "strategy"]):
+                from business_plan_agent import BusinessPlanAgent
+                agent = BusinessPlanAgent()
+                agent_type = "BusinessPlanAgent"
+            elif any(keyword in task_description.lower() for keyword in ["analysis", "research", "market", "competitive"]):
+                from analysis_agent import AnalysisAgent
+                agent = AnalysisAgent()
+                agent_type = "AnalysisAgent"
+            else:
+                # Default to analysis agent
+                from analysis_agent import AnalysisAgent
+                agent = AnalysisAgent()
+                agent_type = "AnalysisAgent"
+            
+            self.logger.info(f"Using real AI agent: {agent_type}")
+            
+            # Prepare task input
+            task_input = {
+                "input": task_description,
+                "description": task_description,
+                "parameters": parameters,
+                "task": "generation" if "business plan" in task_description.lower() else "analysis"
+            }
+            
+            # Execute the agent
+            result = agent.execute(task_input)
+            
+            return {
+                "status": "completed",
+                "agent_name": agent_type,
+                "agent_type": "real_ai_agent",
+                "task_description": task_description,
+                "result_data": result,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Real AI agent execution failed: {str(e)}")
+            return {
+                "status": "failed",
+                "error": f"Real AI agent execution failed: {str(e)}",
+                "agent_id": self.agent_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+    
+    def _execute_real_ai_agent(self, agent_file_path: str, task_description: str, parameters: Dict[str, Any]) -> str:
+        """Execute the real AI agent file"""
+        import subprocess
+        import tempfile
+        import json
+        import os
+        import sys
+        import importlib.util
+        from pathlib import Path
         
-        # Simulate potential failures
-        if random.random() < 0.1:  # 10% failure rate
-            raise Exception("Simulated task failure")
+        try:
+            agent_path = Path(agent_file_path)
+            
+            # Check if this is a real AI agent file (not a system class)
+            if not self._is_real_ai_agent(agent_path):
+                raise Exception(f"File {agent_path} is not a real AI agent")
+            
+            # Try to import and execute the agent directly
+            return self._import_and_execute_agent(agent_path, task_description, parameters)
+                
+        except Exception as e:
+            raise Exception(f"Failed to execute AI agent at {agent_file_path}: {str(e)}")
+    
+    def _is_real_ai_agent(self, agent_path: Path) -> bool:
+        """Check if this is a real AI agent file (not a system class)"""
+        # Real AI agents should be in test_agents/ or agents/ directories
+        path_parts = agent_path.parts
         
-        return {
-            "status": "completed",
-            "processing_time": processing_time,
-            "result_data": f"Task completed by agent {self.agent_id}",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
+        # Check if it's in a real agent directory
+        if 'test_agents' in path_parts or 'agents' in path_parts:
+            return True
+        
+        # Skip system files
+        if any(part in path_parts for part in ['src', 'mark1', 'storage', 'cli']):
+            return False
+            
+        return True
+    
+    def _import_and_execute_agent(self, agent_path: Path, task_description: str, parameters: Dict[str, Any]) -> str:
+        """Import and execute the agent directly"""
+        import importlib.util
+        import sys
+        
+        try:
+            # Create module spec
+            module_name = f"agent_{self.agent_id}_{int(datetime.now().timestamp())}"
+            spec = importlib.util.spec_from_file_location(module_name, agent_path)
+            
+            if spec is None or spec.loader is None:
+                raise Exception("Could not create module spec")
+            
+            # Load the module
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            
+            try:
+                spec.loader.exec_module(module)
+                
+                # Look for agent classes or functions
+                agent_instance = None
+                
+                # Try to find and instantiate agent classes
+                for name in dir(module):
+                    obj = getattr(module, name)
+                    if (hasattr(obj, '__call__') and 
+                        hasattr(obj, '__name__') and 
+                        'agent' in obj.__name__.lower() and
+                        not name.startswith('_')):
+                        
+                        if hasattr(obj, '__init__'):  # It's a class
+                            try:
+                                agent_instance = obj()
+                                break
+                            except:
+                                continue
+                
+                if agent_instance:
+                    # Try different execution methods
+                    task_input = {
+                        "task": "generate",
+                        "input": task_description,
+                        "description": task_description,
+                        "parameters": parameters
+                    }
+                    
+                    result = None
+                    
+                    # Try async run method
+                    if hasattr(agent_instance, 'run'):
+                        try:
+                            import asyncio
+                            if asyncio.iscoroutinefunction(agent_instance.run):
+                                loop = asyncio.get_event_loop()
+                                result = loop.run_until_complete(agent_instance.run(task_input))
+                            else:
+                                result = agent_instance.run(task_input)
+                        except Exception as e:
+                            self.logger.debug(f"Run method failed: {e}")
+                    
+                    # Try execute method
+                    if not result and hasattr(agent_instance, 'execute'):
+                        try:
+                            result = agent_instance.execute(task_input)
+                        except Exception as e:
+                            self.logger.debug(f"Execute method failed: {e}")
+                    
+                    # Try process method
+                    if not result and hasattr(agent_instance, 'process'):
+                        try:
+                            result = agent_instance.process(task_input)
+                        except Exception as e:
+                            self.logger.debug(f"Process method failed: {e}")
+                    
+                    if result:
+                        return f"✅ Real AI Agent Execution Result:\n{json.dumps(result, indent=2)}"
+                
+                # If no agent class found, try function-based agents
+                for name in dir(module):
+                    obj = getattr(module, name)
+                    if (callable(obj) and 
+                        not name.startswith('_') and 
+                        name != 'main'):
+                        try:
+                            result = obj({"input": task_description, "task": "generate"})
+                            if result:
+                                return f"✅ Function-based Agent Result:\n{json.dumps(result, indent=2)}"
+                        except:
+                            continue
+                
+                raise Exception("No executable agent found in module")
+                
+            finally:
+                # Clean up
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+                    
+        except Exception as e:
+            raise Exception(f"Failed to import and execute agent: {str(e)}")
+    
+    def _generate_fallback_output(self, task_description: str, parameters: Dict[str, Any]) -> str:
+        """Generate fallback output when agent execution fails"""
+        return f"""❌ AGENT EXECUTION FAILED
+===============================
+
+🎯 Task: {task_description}
+🤖 Agent: {self.agent_id}
+⏰ Timestamp: {datetime.now(timezone.utc).isoformat()}
+
+📋 Error Summary:
+• Real agent execution failed
+• This is a fallback response
+• Check agent configuration and dependencies
+
+💡 Recommendations:
+• Verify agent file exists and is executable
+• Check required dependencies are installed
+• Ensure proper agent interface implementation
+"""
+    
+    async def _get_agent_info(self) -> Optional[Dict[str, Any]]:
+        """Get agent information from database"""
+        try:
+            async with get_db_session() as session:
+                agent_repo = AgentRepository()
+                agent = await agent_repo.get_by_id(session, Agent, self.agent_id)
+                
+                if agent:
+                    return {
+                        "name": agent.name,
+                        "file_path": agent.file_path,
+                        "framework_version": agent.framework_version,
+                        "capabilities": agent.capabilities,
+                        "agent_type": agent.agent_type
+                    }
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get agent info: {str(e)}")
+            return None
     
     def _start_resource_monitoring(self) -> None:
         """Start monitoring resource usage"""
@@ -304,7 +599,7 @@ class AgentPool:
         """Load available agents from database and create workers"""
         try:
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 agents = await agent_repo.list_by_status(session, AgentStatus.READY)
                 
                 for agent in agents:
@@ -468,7 +763,7 @@ class AgentPool:
         """Update agent status in database"""
         try:
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 agent = await agent_repo.get_by_id(session, Agent, agent_id)
                 
                 if agent:
@@ -522,12 +817,12 @@ class AgentPool:
             failed_count = 0
             
             async with get_db_session() as session:
-                agent_repo = AgentRepository(session)
+                agent_repo = AgentRepository()
                 agents = await agent_repo.list_all(session)
                 
                 for agent in agents:
                     if agent.status == AgentStatus.READY:
-                        self.stats.available_agents += 1
+                        available_count += 1
                     elif agent.status == AgentStatus.BUSY:
                         busy_count += 1
                     elif agent.status == AgentStatus.ERROR:
@@ -535,6 +830,7 @@ class AgentPool:
             
             # Update stats
             self.stats.total_agents = len(self.workers)
+            self.stats.available_agents = available_count
             self.stats.busy_agents = busy_count
             self.stats.failed_agents = failed_count
             

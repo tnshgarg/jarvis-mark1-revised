@@ -37,6 +37,13 @@ app = typer.Typer(
 # Global orchestrator instance
 orchestrator: Optional[Mark1Orchestrator] = None
 
+# Add agent management commands
+try:
+    from mark1.cli.agent_manager import app as agent_app
+    app.add_typer(agent_app, name="agent", help="AI Agent integration and management")
+except ImportError as e:
+    console.print(f"[yellow]Warning: Could not import agent manager: {e}[/yellow]")
+
 
 def print_banner():
     """Print the Mark-1 banner"""

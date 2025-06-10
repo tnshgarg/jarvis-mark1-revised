@@ -8,13 +8,12 @@ task definitions, executions, dependencies, and results.
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Optional, Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from sqlalchemy import (
     Column, String, Text, DateTime, Integer, Float, Boolean,
-    ForeignKey, JSON, Enum as SQLEnum, UniqueConstraint, Index
+    ForeignKey, JSON, Enum as SQLEnum, UniqueConstraint, Index, Table
 )
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
@@ -67,8 +66,8 @@ class Task(Base):
     """
     __tablename__ = "tasks"
     
-    # Primary identification
-    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    # Primary identification - use String type for UUID for SQLite compatibility
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     
@@ -77,9 +76,9 @@ class Task(Base):
     priority = Column(SQLEnum(TaskPriority), nullable=False, default=TaskPriority.NORMAL)
     tags = Column(JSON, default=list)  # List of string tags for categorization
     
-    # Execution configuration
-    agent_id = Column(PGUUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
-    context_id = Column(PGUUID(as_uuid=True), ForeignKey("contexts.id"))
+    # Execution configuration - use String type for UUID for SQLite compatibility
+    agent_id = Column(String(36), ForeignKey("agents.id"), nullable=False)
+    context_id = Column(String(36), ForeignKey("contexts.id"))
     
     # Task parameters and configuration
     parameters = Column(JSON, default=dict)  # Task-specific parameters
@@ -115,8 +114,8 @@ class Task(Base):
     cpu_usage_percentage = Column(Float)
     
     # Relationships
-    agent = relationship("Agent", back_populates="tasks")
-    context = relationship("ContextModel", back_populates="tasks", foreign_keys=[context_id])
+    agent = relationship("Agent")
+    context = relationship("ContextModel", foreign_keys=[context_id])
     executions = relationship("TaskExecution", back_populates="task", cascade="all, delete-orphan")
     
     # Self-referential relationships for dependencies
@@ -277,13 +276,13 @@ class TaskDependency(Base):
     """
     __tablename__ = "task_dependencies"
     
-    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
     
     # The task that depends on another
-    dependent_task_id = Column(PGUUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False)
+    dependent_task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
     
     # The task that must be completed first
-    prerequisite_task_id = Column(PGUUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False)
+    prerequisite_task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
     
     # Type of dependency relationship
     dependency_type = Column(SQLEnum(DependencyType), nullable=False, default=DependencyType.REQUIRES)
@@ -327,8 +326,8 @@ class TaskExecution(Base):
     """
     __tablename__ = "task_executions"
     
-    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    task_id = Column(PGUUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
     
     # Execution tracking
     attempt_number = Column(Integer, nullable=False)
@@ -420,7 +419,7 @@ class TaskTemplate(Base):
     """
     __tablename__ = "task_templates"
     
-    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name = Column(String(255), nullable=False, unique=True, index=True)
     description = Column(Text)
     version = Column(String(50), default="1.0.0")
@@ -458,7 +457,7 @@ class TaskTemplate(Base):
         Index('idx_template_active', 'is_active'),
     )
     
-    def create_task(self, name: str, agent_id: UUID, parameters: Dict[str, Any] = None, **kwargs) -> 'Task':
+    def create_task(self, name: str, agent_id: str, parameters: Dict[str, Any] = None, **kwargs) -> 'Task':
         """Create a new task instance from this template."""
         # Merge template defaults with provided parameters
         final_parameters = self.default_parameters.copy()
@@ -511,13 +510,13 @@ class TaskTemplate(Base):
 
 
 # Association table for task-template relationship
-from sqlalchemy import Table
 task_template_usage = Table(
     'task_template_usage',
     Base.metadata,
-    Column('task_id', PGUUID(as_uuid=True), ForeignKey('tasks.id'), primary_key=True),
-    Column('template_id', PGUUID(as_uuid=True), ForeignKey('task_templates.id'), primary_key=True),
-    Column('created_at', DateTime(timezone=True), default=func.now())
+    Column('task_id', String(36), ForeignKey('tasks.id'), primary_key=True),
+    Column('template_id', String(36), ForeignKey('task_templates.id'), primary_key=True),
+    Column('created_at', DateTime(timezone=True), default=func.now()),
+    extend_existing=True
 )
 
 # Add the back_populates relationship to Task

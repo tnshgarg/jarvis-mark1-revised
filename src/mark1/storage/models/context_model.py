@@ -19,7 +19,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, validates
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -69,19 +68,19 @@ class ContextModel(Base):
     
     __tablename__ = "contexts"
     
-    # Primary identification
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Primary identification - use String instead of UUID for SQLite compatibility
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     context_key = Column(String(255), nullable=False, index=True)
     context_type = Column(String(50), nullable=False, index=True)
     context_scope = Column(String(50), nullable=False, index=True)
     priority = Column(String(20), nullable=False, default=ContextPriority.MEDIUM.value)
     
-    # Hierarchical relationships
-    parent_context_id = Column(UUID(as_uuid=True), ForeignKey("contexts.id"), nullable=True)
-    agent_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint temporarily
+    # Hierarchical relationships - use String instead of UUID for SQLite compatibility
+    parent_context_id = Column(String(36), ForeignKey("contexts.id"), nullable=True)
+    agent_id = Column(String(36), ForeignKey("agents.id"), nullable=True, index=True)
     session_id = Column(String(255), nullable=True, index=True)
     conversation_id = Column(String(255), nullable=True, index=True)
-    task_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint temporarily
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True, index=True)
     
     # Content storage
     title = Column(String(500), nullable=True)
@@ -107,7 +106,8 @@ class ContextModel(Base):
     
     # Relationships - using string references to avoid circular imports
     parent_context = relationship("ContextModel", remote_side=[id], backref="child_contexts")
-    # Note: Agent and Task relationships will be added when those models are available
+    agent = relationship("Agent")
+    # Note: Task relationship will be added when properly configured
     
     # Indexes for performance
     __table_args__ = (

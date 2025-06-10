@@ -1,0 +1,60 @@
+version: "3.8"
+
+# Mark-1 AI Orchestrator - Development Docker Compose
+# Simplified stack for local development
+
+services:
+  # ================================================
+  # PostgreSQL Database
+  # ================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: mark1-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=mark1_db
+      - POSTGRES_USER=mark1
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-dev_postgres_password_123}
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mark1 -d mark1_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ================================================
+  # Redis Cache & Message Broker
+  # ================================================
+  redis:
+    image: redis:7-alpine
+    container_name: mark1-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-dev_redis_password_123}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# ================================================
+# Volumes
+# ================================================
+volumes:
+  postgres_data_dev:
+    driver: local
+  redis_data_dev:
+    driver: local
