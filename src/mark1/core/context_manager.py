@@ -10,6 +10,7 @@ import json
 import gzip
 import hashlib
 import pickle
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union, Set, Tuple
 from dataclasses import dataclass, field
@@ -365,6 +366,7 @@ class AdvancedContextManager:
         self._initialized = False
         self._cleanup_task: Optional[asyncio.Task] = None
         self._sync_task: Optional[asyncio.Task] = None
+        self.database_available = False
         
         # Context relationships
         self._context_hierarchy: Dict[str, Set[str]] = defaultdict(set)  # parent -> children
@@ -382,17 +384,36 @@ class AdvancedContextManager:
         """Initialize the advanced context manager"""
         try:
             self.logger.info("Initializing advanced context manager...")
-            
-            # Start background tasks
-            self._cleanup_task = asyncio.create_task(self._background_cleanup())
-            self._sync_task = asyncio.create_task(self._background_sync())
-            
+
+            # Test database connection
+            self.database_available = False
+            try:
+                async with get_db_session() as session:
+                    # Simple test query
+                    from sqlalchemy import text
+                    await session.execute(text("SELECT 1"))
+                    self.database_available = True
+                    self.logger.info("Database connection verified")
+            except Exception as db_error:
+                self.logger.warning("Database not available, using memory-only mode", error=str(db_error))
+                self.database_available = False
+
+            # Start background tasks only if database is available
+            if self.database_available:
+                self._cleanup_task = asyncio.create_task(self._background_cleanup())
+                self._sync_task = asyncio.create_task(self._background_sync())
+            else:
+                self.logger.info("Skipping database-dependent background tasks")
+
             self._initialized = True
             self.logger.info("Advanced context manager initialized successfully")
-            
+
         except Exception as e:
             self.logger.error("Failed to initialize advanced context manager", error=str(e))
-            raise ContextError(f"Advanced context manager initialization failed: {e}")
+            # Don't raise error, allow fallback to memory-only mode
+            self.database_available = False
+            self._initialized = True
+            self.logger.info("Context manager initialized in memory-only mode")
 
     async def create_context(
         self,
@@ -440,27 +461,38 @@ class AdvancedContextManager:
             elif context_type == ContextType.CONVERSATION:
                 expires_at = datetime.now(timezone.utc) + timedelta(hours=12)
             
-            # Create context record in database
-            async with get_db_session() as session:
-                context_repo = ContextRepository(session)
-                
-                context = await context_repo.create_context(
-                    session=session,
-                    context_key=key,
-                    context_type=context_type.value,
-                    context_scope=scope.value,
-                    priority=priority.value,
-                    agent_id=agent_id,
-                    task_id=task_id,
-                    session_id=session_id,
-                    parent_context_id=parent_context_id,
-                    content=content,
-                    expires_at=expires_at,
-                    tags=list(tags) if tags else []
-                )
-                
-                await session.commit()
-                context_id = str(context.id)
+            # Create context record in database (if available)
+            context_id = str(uuid.uuid4())  # Generate ID regardless of database
+
+            if self.database_available:
+                try:
+                    async with get_db_session() as session:
+                        context_repo = ContextRepository(session)
+
+                        context = await context_repo.create_context(
+                            session=session,
+                            context_key=key,
+                            context_type=context_type.value,
+                            context_scope=scope.value,
+                            priority=priority.value,
+                            agent_id=agent_id,
+                            task_id=task_id,
+                            session_id=session_id,
+                            parent_context_id=parent_context_id,
+                            content=content,
+                            expires_at=expires_at,
+                            tags=list(tags) if tags else []
+                        )
+
+                        await session.commit()
+                        context_id = str(context.id)
+                        self.logger.debug("Context stored in database", context_id=context_id)
+                except Exception as db_error:
+                    self.logger.warning("Failed to store context in database, using memory-only",
+                                      error=str(db_error))
+                    # Continue with memory-only storage
+            else:
+                self.logger.debug("Database not available, using memory-only storage")
             
             # Create enhanced context entry
             context_entry = ContextEntry(
@@ -588,82 +620,102 @@ class AdvancedContextManager:
                         }
                     )
             
-            # Query database
-            async with get_db_session() as session:
-                context_repo = ContextRepository(session)
-                
-                if context_id:
-                    context = await context_repo.get_context_by_id(session, context_id)
-                elif key:
-                    context_type_str = context_type.value if context_type else None
-                    context = await context_repo.get_context_by_key(session, key, context_type_str)
-                else:
-                    return ContextOperationResult(
-                        success=False,
-                        message="Either context_id or key must be provided",
-                        operation_type=ContextOperationType.READ,
-                        operation_time=time.time() - start_time,
-                        cache_hit=cache_hit
-                    )
-                
-                if not context:
-                    return ContextOperationResult(
-                        success=False,
-                        message="Context not found",
-                        operation_type=ContextOperationType.READ,
-                        operation_time=time.time() - start_time,
-                        cache_hit=cache_hit
-                    )
-                
-                # Check expiration
-                if context.expires_at and datetime.now(timezone.utc) > context.expires_at:
-                    return ContextOperationResult(
-                        success=False,
-                        message="Context has expired",
-                        operation_type=ContextOperationType.READ,
-                        operation_time=time.time() - start_time,
-                        cache_hit=cache_hit
-                    )
-                
-                # Create context entry and add to cache
-                context_entry = ContextEntry(
-                    id=str(context.id),
-                    key=context.context_key,
-                    content=context.content or {},
-                    context_type=ContextType(context.context_type),
-                    scope=ContextScope(context.context_scope),
-                    priority=ContextPriority(context.priority),
-                    created_at=context.created_at,
-                    updated_at=context.updated_at,
-                    expires_at=context.expires_at,
-                    version=context.version,
-                    parent_id=str(context.parent_context_id) if context.parent_context_id else None,
-                    agent_id=str(context.agent_id) if context.agent_id else None,
-                    task_id=str(context.task_id) if context.task_id else None,
-                    session_id=context.session_id,
-                    checksum=context.checksum
-                )
-                
-                # Add to cache
-                self.cache.put(str(context.id), context_entry)
-                
-                operation_time = time.time() - start_time
-                self._operation_stats[ContextOperationType.READ] += 1
-                self._operation_times[ContextOperationType.READ].append(operation_time)
-                
+            # Query database (if available)
+            if not self.database_available:
                 return ContextOperationResult(
-                    success=True,
-                    context_id=str(context.id),
-                    data=context.content or {},
-                    message="Context retrieved from database",
+                    success=False,
+                    message="Context not found in cache and database not available",
                     operation_type=ContextOperationType.READ,
-                    operation_time=operation_time,
-                    cache_hit=cache_hit,
-                    metadata={
-                        "version": context.version,
-                        "checksum": context.checksum,
-                        "size_bytes": context.size_bytes or 0
-                    }
+                    operation_time=time.time() - start_time,
+                    cache_hit=cache_hit
+                )
+
+            try:
+                async with get_db_session() as session:
+                    context_repo = ContextRepository(session)
+
+                    if context_id:
+                        context = await context_repo.get_context_by_id(session, context_id)
+                    elif key:
+                        context_type_str = context_type.value if context_type else None
+                        context = await context_repo.get_context_by_key(session, key, context_type_str)
+                    else:
+                        return ContextOperationResult(
+                            success=False,
+                            message="Either context_id or key must be provided",
+                            operation_type=ContextOperationType.READ,
+                            operation_time=time.time() - start_time,
+                            cache_hit=cache_hit
+                        )
+
+                    if not context:
+                        return ContextOperationResult(
+                            success=False,
+                            message="Context not found",
+                            operation_type=ContextOperationType.READ,
+                            operation_time=time.time() - start_time,
+                            cache_hit=cache_hit
+                        )
+
+                    # Check expiration
+                    if context.expires_at and datetime.now(timezone.utc) > context.expires_at:
+                        return ContextOperationResult(
+                            success=False,
+                            message="Context has expired",
+                            operation_type=ContextOperationType.READ,
+                            operation_time=time.time() - start_time,
+                            cache_hit=cache_hit
+                        )
+
+                    # Create context entry and add to cache
+                    context_entry = ContextEntry(
+                        id=str(context.id),
+                        key=context.context_key,
+                        content=context.content or {},
+                        context_type=ContextType(context.context_type),
+                        scope=ContextScope(context.context_scope),
+                        priority=ContextPriority(context.priority),
+                        created_at=context.created_at,
+                        updated_at=context.updated_at,
+                        expires_at=context.expires_at,
+                        version=context.version,
+                        parent_id=str(context.parent_context_id) if context.parent_context_id else None,
+                        agent_id=str(context.agent_id) if context.agent_id else None,
+                        task_id=str(context.task_id) if context.task_id else None,
+                        session_id=context.session_id,
+                        checksum=context.checksum
+                    )
+
+                    # Add to cache
+                    self.cache.put(str(context.id), context_entry)
+
+                    operation_time = time.time() - start_time
+                    self._operation_stats[ContextOperationType.READ] += 1
+                    self._operation_times[ContextOperationType.READ].append(operation_time)
+
+                    return ContextOperationResult(
+                        success=True,
+                        context_id=str(context.id),
+                        content=context.content or {},
+                        message="Context retrieved from database",
+                        operation_type=ContextOperationType.READ,
+                        operation_time=operation_time,
+                        cache_hit=cache_hit,
+                        metadata={
+                            "version": context.version,
+                            "checksum": context.checksum,
+                            "size_bytes": context.size_bytes or 0
+                        }
+                    )
+
+            except Exception as db_error:
+                self.logger.warning("Database query failed", error=str(db_error))
+                return ContextOperationResult(
+                    success=False,
+                    message=f"Database query failed: {db_error}",
+                    operation_type=ContextOperationType.READ,
+                    operation_time=time.time() - start_time,
+                    cache_hit=cache_hit
                 )
                 
         except Exception as e:
@@ -1459,9 +1511,13 @@ class AdvancedContextManager:
             self._initialized = False
             
             self.logger.info("Advanced context manager shutdown complete")
-            
+
         except Exception as e:
             self.logger.error("Error during advanced context manager shutdown", error=str(e))
+
+    async def cleanup(self):
+        """Cleanup method for compatibility"""
+        await self.shutdown()
 
     @property
     def is_initialized(self) -> bool:

@@ -167,7 +167,8 @@ class Agent(Base):
     contexts = relationship(
         "ContextModel",
         back_populates="agent",
-        lazy="select"
+        lazy="select",
+        primaryjoin="Agent.id==foreign(ContextModel.agent_id)"
     )
     
     # Self-referencing relationships for dependencies

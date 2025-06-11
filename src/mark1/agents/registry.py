@@ -115,14 +115,19 @@ class AgentRegistry:
                 agents = await agent_repo.list_all(session)
                 
                 for agent in agents:
+                    # Extract capability names from capability objects, or use empty list
+                    capability_names = []
+                    if hasattr(agent, 'capabilities') and agent.capabilities:
+                        capability_names = [cap.name for cap in agent.capabilities]
+                    
                     registration_info = AgentRegistrationInfo(
                         agent_id=agent.id,
                         name=agent.name,
-                        framework=agent.framework,
+                        framework=agent.agent_type,  # Use agent_type instead of framework
                         file_path=Path(agent.file_path) if agent.file_path else None,
-                        capabilities=agent.capabilities or [],
+                        capabilities=capability_names,
                         metadata=agent.extra_metadata or {},
-                        confidence=agent.confidence or 0.0,
+                        confidence=1.0,  # Default confidence
                         registration_time=agent.created_at,
                         status=self._agent_status_to_registration_status(agent.status)
                     )

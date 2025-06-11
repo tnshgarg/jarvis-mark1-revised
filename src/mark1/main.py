@@ -325,6 +325,18 @@ def init(
 # Add CLI commands
 app.add_typer(cli_app, name="cli", help="Interactive CLI commands")
 
+# Add plugin commands
+from mark1.cli.plugin_commands import plugin_app
+app.add_typer(plugin_app, name="plugin", help="Plugin management commands")
+
+# Add orchestration commands
+from mark1.cli.orchestrate_commands import orchestrate_app
+app.add_typer(orchestrate_app, name="orchestrate", help="Intelligent task orchestration commands")
+
+# Add database commands
+from mark1.cli.database_commands import database_app
+app.add_typer(database_app, name="db", help="Database and context management commands")
+
 
 def main():
     """Main entry point"""

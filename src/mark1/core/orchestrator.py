@@ -31,11 +31,18 @@ from mark1.core.context_manager import ContextManager
 from mark1.scanning.codebase_scanner import CodebaseScanner
 from mark1.llm.model_manager import ModelManager
 from mark1.utils.exceptions import (
-    OrchestrationException, 
+    OrchestrationException,
     TaskExecutionException,
     AgentException,
     Mark1BaseException
 )
+from mark1.plugins import (
+    PluginManager,
+    PluginMetadata,
+    PluginInstallationResult,
+    UniversalPluginAdapter
+)
+from mark1.storage.repositories.plugin_repository import PluginRepository
 
 
 class SystemStatus(Enum):
@@ -119,11 +126,15 @@ class Mark1Orchestrator:
         self.context_manager: Optional[ContextManager] = None
         self.codebase_scanner: Optional[CodebaseScanner] = None
         self.model_manager: Optional[ModelManager] = None
-        
+
+        # Plugin system components
+        self.plugin_manager: Optional[PluginManager] = None
+
         # Repositories
         self.agent_repo: Optional[AgentRepository] = None
         self.task_repo: Optional[TaskRepository] = None
         self.context_repo: Optional[ContextRepository] = None
+        self.plugin_repo: Optional[PluginRepository] = None
         
         # System state
         self._status = SystemStatus.INITIALIZING
@@ -210,7 +221,12 @@ class Mark1Orchestrator:
             self.model_manager = ModelManager()
             await self.model_manager.initialize()
             self.logger.debug("Model manager initialized")
-            
+
+            # Initialize plugin system
+            plugins_dir = Path(self.settings.data_dir) / "plugins"
+            self.plugin_manager = PluginManager(plugins_directory=plugins_dir)
+            self.logger.debug("Plugin manager initialized")
+
             self.logger.info("All core components initialized successfully")
             
         except Exception as e:
@@ -661,7 +677,107 @@ class Mark1Orchestrator:
         except Exception as e:
             self.logger.error("Error during orchestrator shutdown", error=str(e))
             raise OrchestrationException(f"Shutdown failed: {e}")
-    
+
+    # Plugin Orchestration Methods
+
+    async def install_plugin_from_repository(
+        self,
+        repository_url: str,
+        branch: str = "main",
+        force_reinstall: bool = False
+    ) -> PluginInstallationResult:
+        """
+        Install a plugin from a GitHub repository
+
+        Args:
+            repository_url: GitHub repository URL
+            branch: Branch to clone (default: main)
+            force_reinstall: Force reinstallation if plugin exists
+
+        Returns:
+            PluginInstallationResult with installation outcome
+        """
+        if not self.plugin_manager:
+            raise OrchestrationException("Plugin manager not initialized")
+
+        try:
+            self.logger.info("Installing plugin from repository",
+                           repository_url=repository_url, branch=branch)
+
+            result = await self.plugin_manager.install_plugin_from_repository(
+                repository_url=repository_url,
+                branch=branch,
+                force_reinstall=force_reinstall
+            )
+
+            # Store plugin metadata in database if installation successful
+            if result.success and result.plugin_metadata:
+                async with get_db_session() as session:
+                    plugin_repo = PluginRepository(session)
+                    await plugin_repo.create_plugin(result.plugin_metadata)
+
+            return result
+
+        except Exception as e:
+            self.logger.error("Plugin installation failed",
+                            repository_url=repository_url, error=str(e))
+            raise OrchestrationException(f"Plugin installation failed: {e}")
+
+    async def list_installed_plugins(self) -> List[PluginMetadata]:
+        """List all installed plugins"""
+        if not self.plugin_manager:
+            raise OrchestrationException("Plugin manager not initialized")
+
+        return await self.plugin_manager.list_installed_plugins()
+
+    async def get_plugin_metadata(self, plugin_id: str) -> Optional[PluginMetadata]:
+        """Get metadata for a specific plugin"""
+        if not self.plugin_manager:
+            raise OrchestrationException("Plugin manager not initialized")
+
+        return await self.plugin_manager.get_plugin_metadata(plugin_id)
+
+    async def _get_available_plugins(self, plugin_filter: Optional[List[str]] = None) -> List[PluginMetadata]:
+        """Get available plugins for orchestration"""
+        if not self.plugin_manager:
+            return []
+
+        all_plugins = await self.plugin_manager.list_installed_plugins()
+
+        if plugin_filter:
+            return [p for p in all_plugins if p.plugin_id in plugin_filter]
+
+        # Return only ready plugins
+        return [p for p in all_plugins if p.status.value == "ready"]
+
+    async def _plan_plugin_task(
+        self,
+        task_description: str,
+        available_plugins: List[PluginMetadata],
+        timeout: int
+    ) -> Dict[str, Any]:
+        """Plan task execution using available plugins"""
+        # Simple planning logic - can be enhanced with LLM-based planning
+        steps = []
+
+        for plugin in available_plugins:
+            if plugin.capabilities:
+                # Use first available capability
+                capability = plugin.capabilities[0]
+                steps.append({
+                    "plugin_id": plugin.plugin_id,
+                    "capability": capability.name,
+                    "inputs": {"description": task_description},
+                    "parameters": {},
+                    "estimated_duration": 60
+                })
+
+        return {
+            "steps": steps,
+            "estimated_duration": len(steps) * 60,
+            "execution_mode": "sequential"
+        }
+
     @property
     def status(self) -> SystemStatus:
         """Get current system status"""

@@ -5,14 +5,14 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "mark1-orchestrator"
 version = "0.1.0"
-description = "Advanced AI Agent Orchestration System with LangChain Integration"
+description = "Universal Plugin Orchestration System - Transform any GitHub repository into a functional plugin"
 authors = ["Mark-1 Team <team@mark1.ai>"]
 readme = "README.md"
 license = "MIT"
 homepage = "https://github.com/mark1-ai/orchestrator"
 repository = "https://github.com/mark1-ai/orchestrator"
 documentation = "https://docs.mark1.ai/orchestrator"
-keywords = ["ai", "agents", "orchestration", "langchain", "llm"]
+keywords = ["ai", "plugins", "orchestration", "github", "automation", "workflow"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -80,6 +80,13 @@ python-dotenv = "^1.0.0"
 jinja2 = "^3.1.2"
 pyyaml = "^6.0.1"
 toml = "^0.10.2"
+
+# Plugin System Dependencies
+gitpython = "^3.1.40"
+docker = "^6.1.3"
+virtualenv = "^20.24.6"
+packaging = "^23.2"
+requests = "^2.31.0"
 
 # Development Dependencies
 [tool.poetry.group.dev.dependencies]
@@ -166,7 +173,7 @@ ignore_missing_imports = true
 # Pytest Configuration
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --strict-markers --cov=src/mark1 --cov-report=term-missing"
+addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]

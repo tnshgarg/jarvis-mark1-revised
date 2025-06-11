@@ -162,7 +162,7 @@ class WorkflowEngine:
             
         except Exception as e:
             self.logger.error("Failed to execute workflow", workflow_id=workflow_id, error=str(e))
-            raise WorkflowException(f"Workflow execution failed: {e}")
+            raise WorkflowException(f"Workflow execution failed: {str(e)}")
     
     async def _execute_workflow_steps(self, workflow: Workflow) -> None:
         """
@@ -177,8 +177,9 @@ class WorkflowEngine:
                                workflow_id=workflow.workflow_id, 
                                step_id=step.step_id)
                 
-                # Basic step execution (to be enhanced)
-                await asyncio.sleep(1)  # Simulate step execution
+                # Execute step (placeholder - actual execution handled by orchestrator)
+                step.status = "completed"
+                step.completed_at = datetime.now(timezone.utc)
                 
                 self.logger.info("Workflow step completed", 
                                workflow_id=workflow.workflow_id, 

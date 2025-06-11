@@ -21,14 +21,27 @@ except ImportError:
     # Fallback for older pydantic versions
     from pydantic import BaseSettings
 
-from pydantic import (
-    BaseModel,
-    Field,
-    field_validator,
-    model_validator,
-    SecretStr
-)
-from pydantic.types import PositiveInt
+try:
+    from pydantic import (
+        BaseModel,
+        Field,
+        field_validator,
+        model_validator,
+        SecretStr
+    )
+    from pydantic.types import PositiveInt
+    PYDANTIC_V2 = True
+except ImportError:
+    # Fallback for older pydantic versions
+    from pydantic import (
+        BaseModel,
+        Field,
+        validator as field_validator,
+        root_validator as model_validator,
+        SecretStr
+    )
+    from pydantic import PositiveInt
+    PYDANTIC_V2 = False
 
 
 class LogLevel(str, Enum):
@@ -118,7 +131,7 @@ class ChromaDBConfig(BaseModel):
 class OllamaConfig(BaseModel):
     """Ollama LLM provider configuration"""
     
-    base_url: str = Field(default="http://localhost:11434", description="Ollama base URL")
+    base_url: str = Field(default="https://f6da-103-167-213-208.ngrok-free.app", description="Ollama base URL")
     default_model: str = Field(default="llama2", description="Default model name")
     timeout: float = Field(default=300.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
@@ -333,7 +346,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return Environment(v.lower())
         return v
-    
+
     @field_validator('log_level', mode='before')
     @classmethod
     def validate_log_level(cls, v):
@@ -387,7 +400,7 @@ class Settings(BaseSettings):
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert settings to dictionary"""
-        return self.dict()
+        return self.model_dump()
     
     def __repr__(self) -> str:
         return f"<Settings(environment={self.environment}, debug={self.debug})>"
@@ -448,7 +461,7 @@ def override_settings(**kwargs) -> Settings:
         Settings: New settings instance with overridden values
     """
     current_settings = get_settings()
-    settings_dict = current_settings.dict()
+    settings_dict = current_settings.model_dump()
     settings_dict.update(kwargs)
     
     return Settings(**settings_dict)

@@ -6,9 +6,9 @@ Provides unified interface for SQLAlchemy operations with async support
 import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional, Dict, Any, List
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, create_async_engine, async_sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import MetaData, event
 from sqlalchemy.pool import StaticPool
 import structlog
@@ -35,7 +35,7 @@ class DatabaseManager:
     def __init__(self):
         self.settings = get_settings()
         self._engine: Optional[AsyncEngine] = None
-        self._session_factory: Optional[async_sessionmaker] = None
+        self._session_factory: Optional[sessionmaker] = None
         self._is_initialized = False
         
     async def initialize(self) -> None:
@@ -78,7 +78,7 @@ class DatabaseManager:
             self._engine = create_async_engine(database_url, **engine_params)
             
             # Create async session factory
-            self._session_factory = async_sessionmaker(
+            self._session_factory = sessionmaker(
                 bind=self._engine,
                 class_=AsyncSession,
                 expire_on_commit=False,
@@ -206,7 +206,8 @@ class DatabaseManager:
         try:
             async with self.get_session() as session:
                 # Simple query to test connection
-                result = await session.execute("SELECT 1")
+                from sqlalchemy import text
+                result = await session.execute(text("SELECT 1"))
                 result.fetchone()
                 
                 # Get connection pool status

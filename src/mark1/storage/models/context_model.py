@@ -77,11 +77,11 @@ class ContextModel(Base):
     priority = Column(String(20), nullable=False, default=ContextPriority.MEDIUM.value)
     
     # Hierarchical relationships
-    parent_context_id = Column(UUID(as_uuid=True), ForeignKey("contexts.id"), nullable=True)
-    agent_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint temporarily
+    parent_context_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint temporarily
+    agent_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # Removed FK constraint until Agent model exists
     session_id = Column(String(255), nullable=True, index=True)
     conversation_id = Column(String(255), nullable=True, index=True)
-    task_id = Column(UUID(as_uuid=True), nullable=True)  # Removed FK constraint temporarily
+    task_id = Column(String(255), nullable=True)  # Task ID as string to support various formats
     
     # Content storage
     title = Column(String(500), nullable=True)
@@ -106,8 +106,11 @@ class ContextModel(Base):
     checksum = Column(String(64), nullable=True)  # Content integrity
     
     # Relationships - using string references to avoid circular imports
-    parent_context = relationship("ContextModel", remote_side=[id], backref="child_contexts")
-    # Note: Agent and Task relationships will be added when those models are available
+    # parent_context = relationship("ContextModel", remote_side=[id], backref="child_contexts")  # Disabled temporarily
+    # Note: Agent relationship will be added when Agent model is available
+    # agent = relationship("Agent", foreign_keys=[agent_id], back_populates="contexts")
+    # tasks = relationship("Task", back_populates="context", foreign_keys="Task.context_id")
+    # Note: Other relationships will be added when those models are available
     
     # Indexes for performance
     __table_args__ = (
